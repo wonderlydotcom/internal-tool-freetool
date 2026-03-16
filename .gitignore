@@ -223,3 +223,6 @@ dist/
 *.tfvars
 *.tfvars.json
 terraform.tfvars
+
+# Claude Code
+.claude/
