@@ -554,91 +554,89 @@ export default function ResourcesView({
 
       {!(loading || error) && resources.length > 0 && (
         <>
-          <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-[repeat(auto-fit,minmax(340px,1fr))]">
             {resources.map((resource) => (
               <Card
                 key={resource.id}
                 className="transition-transform hover:scale-[1.01]"
               >
-                <CardHeader>
-                  <CardTitle className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-md bg-gray-50 p-1">
-                        <img
-                          src={getResourceLogo(resource.resourceKind)}
-                          alt={getResourceLogoAlt(resource.resourceKind)}
-                          className="h-full w-full object-contain"
-                        />
-                      </div>
-                      <span>{resource.name}</span>
+                <CardHeader className="flex flex-col gap-2">
+                  <CardTitle className="flex items-center gap-3">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-md bg-gray-50 p-1">
+                      <img
+                        src={getResourceLogo(resource.resourceKind)}
+                        alt={getResourceLogoAlt(resource.resourceKind)}
+                        className="h-full w-full object-contain"
+                      />
                     </div>
-                    <div className="flex items-center gap-2">
-                      <PermissionGate
-                        spaceId={spaceId}
-                        permission="edit_resource"
-                        showTooltip={true}
-                      >
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => handleEditResource(resource)}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                      </PermissionGate>
-                      <PermissionGate
-                        spaceId={spaceId}
-                        permission="delete_resource"
-                        showTooltip={true}
-                      >
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8"
-                                  onClick={() =>
-                                    handleDeleteResource(resource.id)
-                                  }
-                                  disabled={
-                                    !canDeleteResource(resource.id) ||
-                                    deletingResourceId === resource.id
-                                  }
-                                >
-                                  <Trash2
-                                    className={`h-4 w-4 text-red-500 ${
-                                      !canDeleteResource(resource.id) ||
-                                      deletingResourceId === resource.id
-                                        ? "opacity-50"
-                                        : ""
-                                    }`}
-                                  />
-                                </Button>
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              {canDeleteResource(resource.id) ? (
-                                <p>Delete resource</p>
-                              ) : (
-                                <p>
-                                  There are still apps that use this resource.
-                                  Please delete those first.
-                                </p>
-                              )}
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </PermissionGate>
-                    </div>
+                    <span>{resource.name}</span>
                   </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-2">
+                  <p className="text-sm text-muted-foreground">
                     {resource.description}
                   </p>
+                  <div className="flex items-center gap-2">
+                    <PermissionGate
+                      spaceId={spaceId}
+                      permission="edit_resource"
+                      showTooltip={true}
+                    >
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => handleEditResource(resource)}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                    </PermissionGate>
+                    <PermissionGate
+                      spaceId={spaceId}
+                      permission="delete_resource"
+                      showTooltip={true}
+                    >
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={() =>
+                                  handleDeleteResource(resource.id)
+                                }
+                                disabled={
+                                  !canDeleteResource(resource.id) ||
+                                  deletingResourceId === resource.id
+                                }
+                              >
+                                <Trash2
+                                  className={`h-4 w-4 text-red-500 ${
+                                    !canDeleteResource(resource.id) ||
+                                    deletingResourceId === resource.id
+                                      ? "opacity-50"
+                                      : ""
+                                  }`}
+                                />
+                              </Button>
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {canDeleteResource(resource.id) ? (
+                              <p>Delete resource</p>
+                            ) : (
+                              <p>
+                                There are still apps that use this resource.
+                                Please delete those first.
+                              </p>
+                            )}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </PermissionGate>
+                  </div>
+                </CardHeader>
+                <CardContent>
                   <p className="text-xs font-mono bg-gray-50 p-2 rounded">
                     {resource.resourceKind === "http"
                       ? resource.baseUrl

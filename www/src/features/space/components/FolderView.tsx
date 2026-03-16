@@ -851,23 +851,25 @@ export default function FolderView({
       )}
 
       <Separator />
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-[repeat(auto-fit,minmax(280px,1fr))]">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-[repeat(auto-fit,minmax(340px,1fr))]">
         {children.map((child) => (
           <Card
             key={child.id}
             className="transition-transform hover:scale-[1.01] cursor-pointer"
             onClick={() => handleCardClick(child)}
           >
-            <CardHeader className="flex flex-row items-center justify-between gap-2 overflow-hidden">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <CardTitle className="text-base font-medium truncate min-w-0">
-                    {child.name}
-                  </CardTitle>
-                </TooltipTrigger>
-                <TooltipContent>{child.name}</TooltipContent>
-              </Tooltip>
-              <div className="flex items-center gap-2 flex-shrink-0">
+            <CardHeader className="flex flex-col gap-2">
+              <CardTitle className="text-base font-medium">
+                {child.name}
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                {child.type === "folder"
+                  ? "Folder"
+                  : child.type === "dashboard"
+                    ? "Dashboard"
+                    : child.description || ""}
+              </p>
+              <div className="flex items-center gap-2">
                 {child.type === "folder" ? (
                   <Popover
                     open={cardPopoverOpen && newFolderParentId === child.id}
@@ -1057,15 +1059,6 @@ export default function FolderView({
                 </PermissionButton>
               </div>
             </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                {child.type === "folder"
-                  ? "Folder"
-                  : child.type === "dashboard"
-                    ? "Dashboard"
-                    : child.description || ""}
-              </p>
-            </CardContent>
           </Card>
         ))}
         {children.length === 0 && (
