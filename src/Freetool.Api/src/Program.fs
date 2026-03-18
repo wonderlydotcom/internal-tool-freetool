@@ -9,6 +9,7 @@ open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.StaticFiles
 open System.Text.Json.Serialization
 open System.Diagnostics
+open System
 open OpenTelemetry.Resources
 open OpenTelemetry.Trace
 open OpenTelemetry.Exporter
@@ -179,6 +180,35 @@ let ensureOpenFgaStore
 
                 createAndSaveNewStore logger connectionString apiUrl
 
+let private ensureOpenFgaStoreWithRetry
+    (logger: ILogger)
+    (connectionString: string)
+    (apiUrl: string)
+    (configuredStoreId: string)
+    : string =
+    let maxAttempts = 20
+    let retryDelay = System.TimeSpan.FromSeconds(2.0)
+
+    let rec attempt currentAttempt =
+        try
+            ensureOpenFgaStore logger connectionString apiUrl configuredStoreId
+        with ex ->
+            if currentAttempt >= maxAttempts then
+                raise ex
+            else
+                logger.LogWarning(
+                    ex,
+                    "OpenFGA store initialization failed on attempt {Attempt}/{MaxAttempts}. Retrying in {DelaySeconds} seconds...",
+                    currentAttempt,
+                    maxAttempts,
+                    retryDelay.TotalSeconds
+                )
+
+                System.Threading.Thread.Sleep(retryDelay)
+                attempt (currentAttempt + 1)
+
+    attempt 1
+
 [<EntryPoint>]
 let main args =
     let builder = WebApplication.CreateBuilder(args)
@@ -301,7 +331,7 @@ let main args =
 
     let actualStoreId =
         try
-            ensureOpenFgaStore startupLogger connectionString openFgaApiUrl configuredStoreId
+            ensureOpenFgaStoreWithRetry startupLogger connectionString openFgaApiUrl configuredStoreId
         with ex ->
             startupLogger.LogWarning(
                 "Could not ensure OpenFGA store exists: {Error}. Using configured store ID (if any). Authorization may fail.",
@@ -561,6 +591,9 @@ let main args =
         app.UseMiddleware<DevAuthMiddleware>() |> ignore
     else
         app.UseMiddleware<IapAuthMiddleware>() |> ignore
+
+    app.MapGet("/healthy", Func<IResult>(fun () -> Results.Ok())) |> ignore
+    app.MapGet("/healthz", Func<IResult>(fun () -> Results.Ok())) |> ignore
 
     app.MapControllers() |> ignore
 

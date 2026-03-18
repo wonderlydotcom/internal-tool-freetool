@@ -1,47 +1,43 @@
-project_id                = "my-gcp-project"
-region                    = "us-central1"
-zone                      = "us-central1-a"
-name_prefix               = "freetool"
-domain_name               = "freetool.example.com"
-dns_managed_zone          = "" # optional
-
-artifact_registry_repo     = "freetool"
+project_id                 = "wonderly-idp-sso"
 artifact_registry_location = "us-central1"
 image_name                 = "freetool-api"
-initial_image_tag          = "latest"
-machine_type               = "e2-small"
-boot_disk_size_gb          = 10
-data_disk_size_gb          = 30
-data_disk_type             = "pd-balanced"
-data_mount_path            = "/mnt/freetool-data"
-preserve_data_disk_on_destroy = true
-artifact_cleanup_policy_dry_run = false
-artifact_keep_recent_count      = 5
-artifact_delete_older_than      = "7d"
+image_tag                  = "latest"
+workload_name              = "app"
+data_mount_path            = "/app/data"
+runtime_secrets_mount_path = "/var/run/secrets/app"
+openfga_image              = "openfga/openfga:latest"
+openfga_api_url            = "http://127.0.0.1:8090"
+openfga_data_mount_path    = "/home/nonroot"
+sqlite_pvc_subpath         = "freetool-db"
+openfga_pvc_subpath        = "openfga"
 
-# IAP OAuth client credentials (create client in GCP Console)
-oauth2_client_id     = "your-iap-oauth-client-id.apps.googleusercontent.com"
-oauth2_client_secret = "your-iap-oauth-client-secret"
-# Optional override. When omitted, access defaults to domain:<base domain derived from domain_name>.
-# iap_access_members = ["domain:example.com"]
+# Optional app-owned non-secret config exposed through envFrom.
+app_config = {
+  ASPNETCORE_ENVIRONMENT                            = "Production"
+  OpenFGA__OrgAdminEmail                           = "admin@example.com"
+  Auth__GoogleDirectory__Enabled                   = "true"
+  Auth__GoogleDirectory__AdminUserEmail            = "admin@example.com"
+  Auth__GoogleDirectory__Scope                     = "https://www.googleapis.com/auth/admin.directory.user.readonly"
+  Auth__GoogleDirectory__OrgUnitKeyPrefix          = "ou"
+  Auth__GoogleDirectory__IncludeOrgUnitHierarchy   = "true"
+  Auth__GoogleDirectory__CustomAttributeKeyPrefix  = "custom"
+}
 
-# Application auth config
-# First apply can use validate_iap_jwt = false and empty audience.
-# After backend service exists, compute real audience and update these values.
-validate_iap_jwt = true
-iap_jwt_audience = "/projects/123456789012/global/backendServices/1234567890123456789"
-org_admin_email  = "admin@example.com"
-google_directory_enabled                     = true
-google_directory_admin_user_email            = "admin@example.com"
-google_directory_scope                       = "https://www.googleapis.com/auth/admin.directory.user.readonly"
-google_directory_org_unit_key_prefix         = "ou"
-google_directory_include_org_unit_hierarchy  = true
-google_directory_custom_attribute_key_prefix = "custom"
-# Provide exactly one:
-# 1) Existing secret name with SA key JSON: google_directory_credentials_secret_name
-# 2) Raw SA key JSON to create/update a managed secret version: google_directory_service_account_key_json
-google_directory_credentials_secret_name     = "freetool-google-directory-dwd-key"
-# google_directory_service_account_key_json  = "{\"type\":\"service_account\",...}"
-
-# Restrict if needed
-allow_ssh_from = ["35.235.240.0/20"]
+# Copy the matching object from:
+# tofu -chdir=../internal-tools-infra/platform/apps output -json app_contracts
+platform_contract = {
+  namespace                   = "app-freetool"
+  domain_name                 = "freetool.wonderly.info"
+  runtime_service_account     = "runtime"
+  service_name                = "app"
+  pvc_name                    = "data"
+  health_check_path           = "/healthy"
+  runtime_contract_config_map = "platform-contract"
+  secret_provider_class       = "app-secrets"
+  artifact_registry_repo      = "freetool"
+  state_bucket_name           = "wonderly-idp-sso-freetool-state"
+  iap_jwt_audience            = "/projects/199626281531/global/backendServices/1234567890123456789"
+  required_pod_labels = {
+    "internal-tools.wonderly.io/service" = "app"
+  }
+}

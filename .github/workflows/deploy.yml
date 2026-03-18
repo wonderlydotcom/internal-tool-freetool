@@ -1,0 +1,132 @@
+name: deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      INFRA_DIR: infra/opentofu
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      GKE_CLUSTER_NAME: ${{ vars.GKE_CLUSTER_NAME }}
+      GKE_CLUSTER_LOCATION: ${{ vars.GKE_CLUSTER_LOCATION }}
+      TOFU_BACKEND_BUCKET: ${{ vars.TOFU_BACKEND_BUCKET }}
+      TOFU_BACKEND_PREFIX: ${{ vars.TOFU_BACKEND_PREFIX }}
+      TOFU_TFVARS_BASE64: ${{ vars.TOFU_TFVARS_BASE64 }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required deploy configuration
+        run: |
+          set -euo pipefail
+          required_vars=(
+            GCP_PROJECT_ID
+            GCP_WORKLOAD_IDENTITY_PROVIDER
+            GCP_DEPLOY_SERVICE_ACCOUNT
+            GKE_CLUSTER_NAME
+            GKE_CLUSTER_LOCATION
+            TOFU_BACKEND_BUCKET
+            TOFU_BACKEND_PREFIX
+            TOFU_TFVARS_BASE64
+          )
+
+          for var_name in "${required_vars[@]}"; do
+            if [[ -z "${!var_name:-}" ]]; then
+              if [[ "$var_name" == "TOFU_TFVARS_BASE64" ]]; then
+                echo "Missing required GitHub Actions variable: TOFU_TFVARS_BASE64" >&2
+                echo >&2
+                echo "Generate the value from a repo-specific OpenTofu var-file and store it as a repo variable:" >&2
+                echo "  ./scripts/encode-tofu-tfvars-base64.sh path/to/terraform.tfvars" >&2
+                echo >&2
+                echo "Then set it in GitHub, for example:" >&2
+                echo "  gh variable set TOFU_TFVARS_BASE64 --body \"\$(./scripts/encode-tofu-tfvars-base64.sh path/to/terraform.tfvars)\" --repo wonderlydotcom/freetool" >&2
+                echo >&2
+                echo "If \`gh auth status\` reports an invalid token, re-authenticate first with:" >&2
+                echo "  gh auth login -h github.com" >&2
+              fi
+              echo "Missing required GitHub Actions variable: ${var_name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: www/package-lock.json
+
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.8.8
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER_NAME }}
+          location: ${{ env.GKE_CLUSTER_LOCATION }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Restore backend
+        run: dotnet restore Freetool.sln
+
+      - name: Install frontend dependencies
+        working-directory: www
+        run: npm ci
+
+      - name: Write OpenTofu backend config
+        run: |
+          set -euo pipefail
+          printf 'bucket = "%s"\nprefix = "%s"\n' "$TOFU_BACKEND_BUCKET" "$TOFU_BACKEND_PREFIX" > "${INFRA_DIR}/backend.gcs.hcl"
+
+      - name: Init OpenTofu backend
+        run: |
+          set -euo pipefail
+          tofu -chdir="${INFRA_DIR}" init -input=false -backend-config=backend.gcs.hcl
+
+      - name: Write OpenTofu deploy tfvars
+        run: |
+          set -euo pipefail
+          tfvars_path="${INFRA_DIR}/terraform.tfvars"
+          printf '%s' "$TOFU_TFVARS_BASE64" | base64 --decode > "$tfvars_path"
+          awk '
+            /^[[:space:]]*image_tag[[:space:]]*=/ { next }
+            { print }
+          ' "$tfvars_path" > "${tfvars_path}.normalized"
+          mv "${tfvars_path}.normalized" "$tfvars_path"
+          test -s "$tfvars_path"
+
+      - name: Deploy app
+        run: scripts/deploy-app-from-tofu.sh -var-file=terraform.tfvars

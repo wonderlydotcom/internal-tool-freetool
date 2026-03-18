@@ -1,280 +1,193 @@
+variable "kubeconfig_path" {
+  description = "Path to the kubeconfig that has credentials for the shared internal-tools GKE cluster."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
 variable "project_id" {
-  description = "GCP project ID"
+  description = "GCP project ID that owns the shared Artifact Registry repositories."
   type        = string
-}
-
-variable "region" {
-  description = "GCP region"
-  type        = string
-}
-
-variable "zone" {
-  description = "GCP zone"
-  type        = string
-}
-
-variable "name_prefix" {
-  description = "Prefix used for resource names"
-  type        = string
-  default     = "freetool"
-}
-
-variable "domain_name" {
-  description = "Public DNS name used for HTTPS (e.g. freetool.example.com)"
-  type        = string
-}
-
-variable "dns_managed_zone" {
-  description = "Optional Cloud DNS managed zone name for creating an A record"
-  type        = string
-  default     = ""
-}
-
-variable "oauth2_client_id" {
-  description = "OAuth client ID used by IAP"
-  type        = string
-  default     = ""
 
   validation {
-    condition     = trimspace(var.oauth2_client_id) != ""
-    error_message = "Set oauth2_client_id."
+    condition     = trimspace(var.project_id) != ""
+    error_message = "Set project_id to the shared internal-tools GCP project."
   }
-}
-
-variable "oauth2_client_secret" {
-  description = "OAuth client secret used by IAP"
-  type        = string
-  sensitive   = true
-  default     = ""
-
-  validation {
-    condition     = trimspace(var.oauth2_client_secret) != ""
-    error_message = "Set oauth2_client_secret."
-  }
-}
-
-variable "machine_type" {
-  description = "GCE machine type"
-  type        = string
-  default     = "e2-small"
-}
-
-variable "boot_disk_size_gb" {
-  description = "Boot disk size in GB for the VM"
-  type        = number
-  default     = 10
-}
-
-variable "primary_backend_capacity" {
-  description = "Capacity scaler for the primary MIG backend (0..1)"
-  type        = number
-  default     = 1
-
-  validation {
-    condition     = var.primary_backend_capacity >= 0 && var.primary_backend_capacity <= 1
-    error_message = "primary_backend_capacity must be between 0 and 1."
-  }
-}
-
-variable "bluegreen_enabled" {
-  description = "Whether the OpenTofu-managed green VM/instance-group backend is provisioned"
-  type        = bool
-  default     = false
-
-  validation {
-    condition     = !var.bluegreen_enabled || var.preserve_data_disk_on_destroy
-    error_message = "When bluegreen_enabled is true, preserve_data_disk_on_destroy must be true."
-  }
-}
-
-variable "bluegreen_backend_capacity" {
-  description = "Capacity scaler for the green backend (0..1)"
-  type        = number
-  default     = 0
-
-  validation {
-    condition     = var.bluegreen_backend_capacity >= 0 && var.bluegreen_backend_capacity <= 1
-    error_message = "bluegreen_backend_capacity must be between 0 and 1."
-  }
-}
-
-variable "bluegreen_image_tag" {
-  description = "Image tag for the green environment. If empty, initial_image_tag is used."
-  type        = string
-  default     = ""
-}
-
-variable "primary_mig_target_size" {
-  description = "Target size for the primary managed instance group."
-  type        = number
-  default     = 1
-
-  validation {
-    condition     = var.primary_mig_target_size >= 0
-    error_message = "primary_mig_target_size must be >= 0."
-  }
-}
-
-variable "primary_mig_autohealing_initial_delay_sec" {
-  description = "Initial delay before managed instance group autohealing starts checking a new instance."
-  type        = number
-  default     = 300
-
-  validation {
-    condition     = var.primary_mig_autohealing_initial_delay_sec >= 0
-    error_message = "primary_mig_autohealing_initial_delay_sec must be >= 0."
-  }
-}
-
-variable "artifact_registry_repo" {
-  description = "Artifact Registry Docker repository name"
-  type        = string
-  default     = "freetool"
 }
 
 variable "artifact_registry_location" {
-  description = "Artifact Registry location"
+  description = "Artifact Registry location used by the shared platform."
   type        = string
   default     = "us-central1"
-}
-
-variable "image_name" {
-  description = "Container image name within Artifact Registry"
-  type        = string
-  default     = "freetool-api"
-}
-
-variable "initial_image_tag" {
-  description = "Initial image tag used on first boot"
-  type        = string
-  default     = "latest"
-}
-
-variable "org_admin_email" {
-  description = "Optional Freetool org admin email"
-  type        = string
-  default     = ""
-}
-
-variable "validate_iap_jwt" {
-  description = "Whether API should validate IAP JWT assertions"
-  type        = bool
-  default     = true
-}
-
-variable "iap_jwt_audience" {
-  description = "IAP JWT audience passed to the API (Auth:IAP:JwtAudience)"
-  type        = string
-  default     = ""
-}
-
-variable "google_directory_enabled" {
-  description = "Enable Google Workspace Directory lookup for OU/custom-attribute group keys"
-  type        = bool
-  default     = false
-}
-
-variable "google_directory_admin_user_email" {
-  description = "Delegated admin user email for Google Directory domain-wide delegation"
-  type        = string
-  default     = ""
-}
-
-variable "google_directory_scope" {
-  description = "OAuth scope used for Google Directory lookups"
-  type        = string
-  default     = "https://www.googleapis.com/auth/admin.directory.user.readonly"
-}
-
-variable "google_directory_org_unit_key_prefix" {
-  description = "Group-key prefix used for org unit derived mappings"
-  type        = string
-  default     = "ou"
-}
-
-variable "google_directory_include_org_unit_hierarchy" {
-  description = "Whether OU hierarchy keys should be emitted (e.g. /Eng and /Eng/Support)"
-  type        = bool
-  default     = true
-}
-
-variable "google_directory_custom_attribute_key_prefix" {
-  description = "Group-key prefix used for custom schema derived mappings"
-  type        = string
-  default     = "custom"
-}
-
-variable "google_directory_credentials_secret_name" {
-  description = "Secret Manager secret ID containing a JSON service account key used for Google Directory Domain-Wide Delegation. If empty and google_directory_service_account_key_json is set, this module creates a secret."
-  type        = string
-  default     = ""
-}
-
-variable "google_directory_service_account_key_json" {
-  description = "Optional JSON key contents for a Google Directory DWD service account. Stored as a Secret Manager secret version when provided."
-  type        = string
-  sensitive   = true
-  default     = ""
 
   validation {
-    condition = !(
-      trimspace(var.google_directory_credentials_secret_name) != "" &&
-      trimspace(var.google_directory_service_account_key_json) != ""
-    )
-    error_message = "Set either google_directory_credentials_secret_name or google_directory_service_account_key_json, not both."
+    condition     = trimspace(var.artifact_registry_location) != ""
+    error_message = "artifact_registry_location must not be empty."
   }
 }
 
-variable "iap_access_members" {
-  description = "Optional override for principals granted IAP-secured Web App User access. Leave empty to derive from domain_name."
-  type        = list(string)
-  default     = []
-}
-
-variable "allow_ssh_from" {
-  description = "CIDRs allowed to SSH directly to VM"
-  type        = list(string)
-  default     = ["35.235.240.0/20"]
-}
-
-variable "data_disk_size_gb" {
-  description = "Persistent data disk size in GB for Freetool and OpenFGA state"
-  type        = number
-  default     = 30
-}
-
-variable "data_disk_type" {
-  description = "Persistent disk type for app data"
+variable "image_name" {
+  description = "Container image name inside the per-app Artifact Registry repository."
   type        = string
-  default     = "pd-balanced"
+  default     = "freetool-api"
+
+  validation {
+    condition     = trimspace(var.image_name) != ""
+    error_message = "image_name must not be empty."
+  }
+}
+
+variable "image_tag" {
+  description = "Container image tag to deploy."
+  type        = string
+  default     = "latest"
+
+  validation {
+    condition     = trimspace(var.image_tag) != ""
+    error_message = "image_tag must not be empty."
+  }
+}
+
+variable "workload_name" {
+  description = "Name for the app-owned StatefulSet."
+  type        = string
+  default     = "app"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", var.workload_name))
+    error_message = "workload_name must be a DNS-safe Kubernetes resource name."
+  }
 }
 
 variable "data_mount_path" {
-  description = "Mount path used for the persistent data disk"
+  description = "Mount path for the Freetool SQLite data inside the API container."
   type        = string
-  default     = "/mnt/freetool-data"
+  default     = "/app/data"
+
+  validation {
+    condition     = startswith(var.data_mount_path, "/")
+    error_message = "data_mount_path must be an absolute path."
+  }
 }
 
-variable "preserve_data_disk_on_destroy" {
-  description = "Prevent accidental deletion of persistent data disk on tofu destroy"
-  type        = bool
-  default     = true
-}
-
-variable "artifact_cleanup_policy_dry_run" {
-  description = "Whether Artifact Registry cleanup policy runs in dry-run mode"
-  type        = bool
-  default     = false
-}
-
-variable "artifact_keep_recent_count" {
-  description = "How many recent versions to keep for the main app image package"
-  type        = number
-  default     = 5
-}
-
-variable "artifact_delete_older_than" {
-  description = "Delete threshold for old image versions (e.g. 1d, 7d, 30d)"
+variable "runtime_secrets_mount_path" {
+  description = "Mount path for the platform-managed SecretProviderClass when runtime secrets are declared."
   type        = string
-  default     = "7d"
+  default     = "/var/run/secrets/app"
+
+  validation {
+    condition     = startswith(var.runtime_secrets_mount_path, "/")
+    error_message = "runtime_secrets_mount_path must be an absolute path."
+  }
+}
+
+variable "openfga_image" {
+  description = "OpenFGA image used for the sidecar and migration init container."
+  type        = string
+  default     = "openfga/openfga:latest"
+
+  validation {
+    condition     = trimspace(var.openfga_image) != ""
+    error_message = "openfga_image must not be empty."
+  }
+}
+
+variable "openfga_api_url" {
+  description = "API URL that the Freetool container should use to talk to the co-located OpenFGA sidecar."
+  type        = string
+  default     = "http://127.0.0.1:8090"
+
+  validation {
+    condition     = startswith(var.openfga_api_url, "http://") || startswith(var.openfga_api_url, "https://")
+    error_message = "openfga_api_url must be an absolute HTTP(S) URL."
+  }
+}
+
+variable "openfga_data_mount_path" {
+  description = "Mount path for the OpenFGA SQLite data inside the OpenFGA containers."
+  type        = string
+  default     = "/home/nonroot"
+
+  validation {
+    condition     = startswith(var.openfga_data_mount_path, "/")
+    error_message = "openfga_data_mount_path must be an absolute path."
+  }
+}
+
+variable "sqlite_pvc_subpath" {
+  description = "Subdirectory on the shared PVC used for the Freetool application SQLite files."
+  type        = string
+  default     = "freetool-db"
+}
+
+variable "openfga_pvc_subpath" {
+  description = "Subdirectory on the shared PVC used for the OpenFGA SQLite files."
+  type        = string
+  default     = "openfga"
+}
+
+variable "google_directory_credentials_relative_path" {
+  description = "Relative path of the mounted Google Directory credentials file inside runtime_secrets_mount_path when the platform contract declares runtime secrets."
+  type        = string
+  default     = "google-directory-dwd-key.json"
+}
+
+variable "app_config" {
+  description = "Optional app-owned ConfigMap entries exposed to the API container through envFrom."
+  type        = map(string)
+  default     = {}
+}
+
+variable "extra_resource_labels" {
+  description = "Additional labels applied to app-owned Kubernetes resources."
+  type        = map(string)
+  default     = {}
+}
+
+variable "extra_pod_labels" {
+  description = "Additional labels applied to the pod template."
+  type        = map(string)
+  default     = {}
+}
+
+variable "pod_annotations" {
+  description = "Additional annotations applied to the pod template."
+  type        = map(string)
+  default     = {}
+}
+
+variable "platform_contract" {
+  description = "Subset of the internal-tools-infra app_contracts entry for this app."
+  type = object({
+    namespace                   = string
+    domain_name                 = string
+    runtime_service_account     = string
+    service_name                = string
+    pvc_name                    = string
+    health_check_path           = string
+    runtime_contract_config_map = string
+    secret_provider_class       = optional(string, null)
+    artifact_registry_repo      = string
+    state_bucket_name           = string
+    iap_jwt_audience            = string
+    required_pod_labels         = map(string)
+  })
+
+  validation {
+    condition = alltrue([
+      trimspace(var.platform_contract.namespace) != "",
+      startswith(var.platform_contract.namespace, "app-"),
+      trimspace(var.platform_contract.domain_name) != "",
+      trimspace(var.platform_contract.runtime_service_account) != "",
+      trimspace(var.platform_contract.service_name) != "",
+      trimspace(var.platform_contract.pvc_name) != "",
+      startswith(var.platform_contract.health_check_path, "/"),
+      trimspace(var.platform_contract.runtime_contract_config_map) != "",
+      trimspace(var.platform_contract.artifact_registry_repo) != "",
+      trimspace(var.platform_contract.state_bucket_name) != "",
+      trimspace(var.platform_contract.iap_jwt_audience) != "",
+      length(var.platform_contract.required_pod_labels) > 0,
+    ])
+    error_message = "platform_contract must be populated from internal-tools-infra app_contracts for this app."
+  }
 }

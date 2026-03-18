@@ -125,6 +125,11 @@ ensure_not_default_branch
 CHANGED_FILES="$(git diff --name-only "$DIFF_BASE_REF"...HEAD)"
 RUN_BACKEND=false
 RUN_FRONTEND=false
+RUN_WORKFLOW_VALIDATION=false
+
+mapfile -t CHANGED_WORKFLOW_FILES < <(
+  grep -E '^\.github/workflows/[^[:space:]]+\.ya?ml$' <<<"$CHANGED_FILES" || true
+)
 
 if grep -qE '^src/' <<<"$CHANGED_FILES"; then
   RUN_BACKEND=true
@@ -132,6 +137,10 @@ fi
 
 if grep -qE '^www/' <<<"$CHANGED_FILES"; then
   RUN_FRONTEND=true
+fi
+
+if [ "${#CHANGED_WORKFLOW_FILES[@]}" -gt 0 ]; then
+  RUN_WORKFLOW_VALIDATION=true
 fi
 
 if [ "$RUN_BACKEND" = true ]; then
@@ -148,6 +157,18 @@ if [ "$RUN_FRONTEND" = true ]; then
   run_step "Running frontend format" bash -lc "cd www && npm run format"
 else
   echo "No changes under www/; skipping frontend verification steps."
+fi
+
+if [ "$RUN_WORKFLOW_VALIDATION" = true ]; then
+  if ! command -v actionlint >/dev/null 2>&1; then
+    echo "actionlint is required to validate changed GitHub Actions workflows."
+    echo "Install: https://github.com/rhysd/actionlint"
+    exit 1
+  fi
+
+  run_step "Validating changed GitHub Actions workflows" actionlint "${CHANGED_WORKFLOW_FILES[@]}"
+else
+  echo "No changes under .github/workflows/; skipping workflow validation."
 fi
 
 if ! command -v gh >/dev/null 2>&1; then

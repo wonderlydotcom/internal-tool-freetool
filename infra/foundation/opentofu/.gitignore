@@ -1,10 +1,13 @@
 .terraform/
-backend.gcs.hcl
 *.tfstate
 *.tfstate.*
+*.tfvars
+*.tfvars.json
+backend.hcl
+backend.auto.hcl
+tfplan
 override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
 crash.log
-terraform.tfvars

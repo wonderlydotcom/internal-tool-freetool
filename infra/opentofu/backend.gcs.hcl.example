@@ -1,0 +1,3 @@
+# Copy the bucket name from the matching app_contracts entry in ../internal-tools-infra.
+bucket = "wonderly-idp-sso-freetool-state"
+prefix = "infra/opentofu"

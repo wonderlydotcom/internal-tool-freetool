@@ -249,6 +249,23 @@ let createInvitedPlaceholderUser (email: string) : ValidatedUser =
 // ============================================================================
 
 [<Fact>]
+let ``Allows health checks without IAP headers`` () : Task =
+    task {
+        let context = createTestHttpContext ()
+        context.Request.Path <- PathString("/healthy")
+        let userRepo = MockUserRepository(Map.empty, Ok(), Ok())
+        let authService = MockAuthorizationService(Ok())
+        setupServices context userRepo authService None [] |> ignore
+
+        let middleware, wasNextCalled = createMiddleware ()
+
+        do! middleware.InvokeAsync(context)
+
+        Assert.True(wasNextCalled())
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode)
+    }
+
+[<Fact>]
 let ``Returns 401 when IAP email header missing`` () : Task =
     task {
         let context = createTestHttpContext ()

@@ -1,130 +1,84 @@
-output "vm_name" {
-  value       = "${var.name_prefix}-vm"
-  description = "Base instance name used by the managed instance group"
+output "namespace" {
+  value       = var.platform_contract.namespace
+  description = "Platform-created namespace where the workload is deployed."
 }
 
-output "vm_zone" {
-  value       = var.zone
-  description = "Compute instance zone"
+output "domain_name" {
+  value       = var.platform_contract.domain_name
+  description = "Public domain name allocated by internal-tools-infra."
 }
 
-output "vm_external_ip" {
-  value       = null
-  description = "Managed instances use ephemeral external IPs, so there is no stable VM external IP output"
-}
-
-output "managed_instance_group_name" {
-  value       = google_compute_instance_group_manager.freetool.name
-  description = "Managed instance group name"
-}
-
-output "bluegreen_vm_name" {
-  value       = var.bluegreen_enabled ? google_compute_instance.bluegreen[0].name : null
-  description = "Green VM name when blue/green is enabled"
-}
-
-output "bluegreen_instance_group_name" {
-  value       = var.bluegreen_enabled ? google_compute_instance_group.bluegreen[0].name : null
-  description = "Green unmanaged instance group name when blue/green is enabled"
-}
-
-output "load_balancer_ip" {
-  value       = google_compute_global_address.freetool.address
-  description = "Global IP for HTTPS load balancer"
-}
-
-output "https_url" {
-  value       = "https://${var.domain_name}/"
-  description = "Public Freetool URL"
-}
-
-output "artifact_registry_repo" {
-  value       = google_artifact_registry_repository.freetool.name
-  description = "Artifact Registry repository resource name"
+output "workload_name" {
+  value       = kubernetes_stateful_set_v1.app.metadata[0].name
+  description = "Name of the app-owned StatefulSet."
 }
 
 output "project_id" {
   value       = var.project_id
-  description = "GCP project ID used by infra"
+  description = "GCP project ID that owns the shared app Artifact Registry repositories."
 }
 
 output "artifact_registry_location" {
   value       = var.artifact_registry_location
-  description = "Artifact Registry location used by infra"
+  description = "Artifact Registry location used by the app deployment."
 }
 
-output "artifact_registry_repo_id" {
-  value       = var.artifact_registry_repo
-  description = "Artifact Registry repository ID used by infra"
+output "artifact_registry_repo" {
+  value       = var.platform_contract.artifact_registry_repo
+  description = "Per-app Artifact Registry repository ID from the platform contract."
+}
+
+output "image_name" {
+  value       = var.image_name
+  description = "Image name deployed inside the per-app Artifact Registry repository."
+}
+
+output "image_ref" {
+  value       = local.image_ref
+  description = "Fully-qualified Artifact Registry image reference used by the workload."
+}
+
+output "openfga_image" {
+  value       = var.openfga_image
+  description = "OpenFGA image used by the sidecar and migration init container."
+}
+
+output "runtime_service_account" {
+  value       = var.platform_contract.runtime_service_account
+  description = "Platform-managed Kubernetes service account used by the workload."
+}
+
+output "service_name" {
+  value       = var.platform_contract.service_name
+  description = "Platform-managed ClusterIP service that fronts the workload."
+}
+
+output "pvc_name" {
+  value       = var.platform_contract.pvc_name
+  description = "Platform-managed PVC mounted into the workload."
+}
+
+output "runtime_contract_config_map_name" {
+  value       = var.platform_contract.runtime_contract_config_map
+  description = "Platform-managed ConfigMap exposed to the workload via envFrom."
+}
+
+output "app_config_map_name" {
+  value       = kubernetes_config_map_v1.app_config.metadata[0].name
+  description = "App-owned ConfigMap created by this stack."
+}
+
+output "secret_provider_class_name" {
+  value       = local.secret_provider_class_name
+  description = "Platform-managed SecretProviderClass name when runtime secrets are configured."
+}
+
+output "state_bucket_name" {
+  value       = var.platform_contract.state_bucket_name
+  description = "Per-app GCS bucket intended for this repo's OpenTofu state."
 }
 
 output "iap_jwt_audience" {
-  value       = var.iap_jwt_audience
-  description = "IAP JWT audience passed to API"
-  sensitive   = true
-}
-
-output "org_admin_email" {
-  value       = var.org_admin_email
-  description = "Configured org admin email"
-}
-
-output "data_disk_name" {
-  value       = var.preserve_data_disk_on_destroy ? google_compute_disk.data_protected[0].name : google_compute_disk.data_unprotected[0].name
-  description = "Persistent data disk name"
-}
-
-output "data_mount_path" {
-  value       = var.data_mount_path
-  description = "Data disk mount path on VM"
-}
-
-output "iap_jwt_audience_hint" {
-  value       = "/projects/<project-number>/global/backendServices/<backend-service-id>"
-  description = "Format expected by Auth:IAP:JwtAudience (get backend-service-id from gcloud describe)."
-}
-
-output "backend_service_name" {
-  value       = google_compute_backend_service.freetool.name
-  description = "Backend service name for gcloud describe lookups"
-}
-
-output "validate_iap_jwt" {
-  value       = var.validate_iap_jwt
-  description = "Whether API validates IAP JWT assertions"
-}
-
-output "google_directory_enabled" {
-  value       = var.google_directory_enabled
-  description = "Whether Google Directory lookup is enabled"
-}
-
-output "google_directory_admin_user_email" {
-  value       = var.google_directory_admin_user_email
-  description = "Delegated admin user email for Google Directory lookups"
-}
-
-output "google_directory_scope" {
-  value       = var.google_directory_scope
-  description = "Google Directory OAuth scope"
-}
-
-output "google_directory_org_unit_key_prefix" {
-  value       = var.google_directory_org_unit_key_prefix
-  description = "Group-key prefix for org unit derived keys"
-}
-
-output "google_directory_include_org_unit_hierarchy" {
-  value       = var.google_directory_include_org_unit_hierarchy
-  description = "Whether org unit hierarchy keys are emitted"
-}
-
-output "google_directory_custom_attribute_key_prefix" {
-  value       = var.google_directory_custom_attribute_key_prefix
-  description = "Group-key prefix for custom schema derived keys"
-}
-
-output "google_directory_credentials_secret_name" {
-  value       = local.google_directory_credentials_secret_name
-  description = "Secret Manager secret ID containing Google Directory credentials JSON"
+  value       = var.platform_contract.iap_jwt_audience
+  description = "IAP JWT audience from the platform contract."
 }
