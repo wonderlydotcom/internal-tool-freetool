@@ -857,21 +857,23 @@ F# requires dependencies to be ordered correctly in `.fsproj` files. Always ensu
 - Keep business logic pure and free of infrastructure concerns
 - Use meaningful commit messages following [Conventional Commits](https://www.conventionalcommits.org/)
 
-# 💻 Deploying (GCE + IAP)
+# 💻 Deploying (GKE + IAP)
 
-Freetool is designed to run behind **Google Cloud IAP** at the root path (`/`) on GCE.
+Freetool is designed to run behind **Google Cloud IAP** at the root path (`/`) on the shared internal-tools GKE cluster.
 
-Use OpenTofu + deployment scripts in this repo:
+Use the Kubernetes deployment flow in this repo:
 
-- Infra provisioning: `infra/opentofu/`
-- Deployment guide: `docs/gce-iap-deploy.md`
-- App deploy script (uses OpenTofu outputs): `scripts/deploy-gce-from-tofu.sh`
+- Foundation/bootstrap stack: `infra/foundation/opentofu/`
+- App workload stack: `infra/opentofu/`
+- App stack guide: `infra/opentofu/README.md`
+- Migration runbook: `MIGRATE_TO_K8S.md`
+- App deploy script: `scripts/deploy-app-from-tofu.sh`
 
 ## 🔐 Production Auth Flow (IAP + Google Directory DWD)
 
 At runtime, authentication and authorization flow works like this:
 
-1. User accesses the app through the HTTPS load balancer protected by IAP.
+1. User accesses the app through the HTTPS load balancer and Kubernetes ingress protected by IAP.
 2. IAP injects identity headers (`X-Goog-Authenticated-User-Email`, etc.) and JWT assertion header.
 3. `IapAuthMiddleware` validates the IAP JWT assertion (`Auth:IAP:*` config).
 4. Middleware extracts user identity and IAP group headers.
@@ -905,29 +907,33 @@ Auth__GoogleDirectory__Scope=https://www.googleapis.com/auth/admin.directory.use
 Auth__GoogleDirectory__OrgUnitKeyPrefix=ou
 Auth__GoogleDirectory__IncludeOrgUnitHierarchy=true
 Auth__GoogleDirectory__CustomAttributeKeyPrefix=custom
-Auth__GoogleDirectory__CredentialsFile=/var/secrets/google/directory-dwd-key.json
+Auth__GoogleDirectory__CredentialsFile=/var/run/secrets/app/google-directory-dwd-key.json
 ```
 
 If `Auth__GoogleDirectory__Enabled` is missing/false, Directory API calls are skipped and OU/custom-schema mappings will not work.
 
 ## 🛠️ Quick Production Verification
 
-1. Confirm env vars in the running service:
+1. Confirm the workload is rolled out:
    ```bash
-   sudo docker compose -f /opt/freetool/docker-compose.gce.yml --env-file /opt/freetool/.env exec -T freetool-api printenv | grep -E 'Auth__IAP|Auth__GoogleDirectory|FREETOOL_DEV_MODE'
+   kubectl -n app-freetool rollout status statefulset/app
    ```
-2. Trigger a request:
+2. Confirm env vars in the running API container:
+   ```bash
+   kubectl -n app-freetool exec app-0 -c api -- printenv | grep -E 'Auth__IAP|Auth__GoogleDirectory'
+   ```
+3. Check the health endpoint over a port-forward:
+   ```bash
+   kubectl -n app-freetool port-forward pod/app-0 18080:8080
+   curl -i http://127.0.0.1:18080/healthy
+   ```
+4. Check logs for Directory failures:
+   ```bash
+   kubectl -n app-freetool logs app-0 -c api --since=30m | grep -E "Failed to obtain Google Directory access token|Google Directory lookup failed|lookup failed unexpectedly"
+   ```
+5. Smoke test through the public URL:
    ```bash
    curl -i https://<your-host>/user/me
-   ```
-3. Check logs for Directory failures:
-   ```bash
-   sudo docker compose -f /opt/freetool/docker-compose.gce.yml --env-file /opt/freetool/.env logs --since 30m freetool-api 2>&1 | grep -E "Failed to obtain Google Directory access token|Google Directory lookup failed|lookup failed unexpectedly"
-   ```
-4. Check group-to-space mappings in DB:
-   ```bash
-   sudo docker cp "$(sudo docker compose -f /opt/freetool/docker-compose.gce.yml --env-file /opt/freetool/.env ps -q freetool-api)":/app/data/freetool.db /tmp/freetool.db.work
-   sqlite3 -header -column /tmp/freetool.db.work "select GroupKey, SpaceId, IsActive from IdentityGroupSpaceMappings order by CreatedAt desc;"
    ```
 
 # 📄 License & 🙏 Acknowledgements
