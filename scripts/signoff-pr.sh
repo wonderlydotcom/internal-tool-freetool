@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+DOCKER_COMPOSE_CMD=()
+
 run_step() {
   local label="$1"
   shift
@@ -11,6 +13,54 @@ run_step() {
   echo
   echo "==> $label"
   "$@"
+}
+
+resolve_docker_compose_cmd() {
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    DOCKER_COMPOSE_CMD=(docker compose)
+    return
+  fi
+
+  if command -v docker-compose >/dev/null 2>&1; then
+    DOCKER_COMPOSE_CMD=(docker-compose)
+    return
+  fi
+
+  echo "Docker Compose is required to start the local OpenFGA test dependency."
+  echo "Install Docker Desktop (or docker-compose) and retry."
+  exit 1
+}
+
+ensure_openfga_ready() {
+  local readiness_url="http://127.0.0.1:8090/stores"
+  local max_attempts=30
+  local attempt=1
+
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "'curl' is required to verify OpenFGA readiness."
+    exit 1
+  fi
+
+  if curl -fsS "$readiness_url" >/dev/null 2>&1; then
+    echo "OpenFGA is already reachable at $readiness_url"
+    return
+  fi
+
+  resolve_docker_compose_cmd
+  "${DOCKER_COMPOSE_CMD[@]}" up -d openfga
+
+  until curl -fsS "$readiness_url" >/dev/null 2>&1; do
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      echo "OpenFGA did not become ready at $readiness_url after $((max_attempts * 2)) seconds."
+      "${DOCKER_COMPOSE_CMD[@]}" ps openfga || true
+      exit 1
+    fi
+
+    sleep 2
+    attempt=$((attempt + 1))
+  done
+
+  echo "OpenFGA is ready at $readiness_url"
 }
 
 ensure_not_default_branch() {
@@ -125,6 +175,11 @@ ensure_not_default_branch
 CHANGED_FILES="$(git diff --name-only "$DIFF_BASE_REF"...HEAD)"
 RUN_BACKEND=false
 RUN_FRONTEND=false
+RUN_WORKFLOW_VALIDATION=false
+
+mapfile -t CHANGED_WORKFLOW_FILES < <(
+  grep -E '^\.github/workflows/[^[:space:]]+\.ya?ml$' <<<"$CHANGED_FILES" || true
+)
 
 if grep -qE '^src/' <<<"$CHANGED_FILES"; then
   RUN_BACKEND=true
@@ -134,9 +189,14 @@ if grep -qE '^www/' <<<"$CHANGED_FILES"; then
   RUN_FRONTEND=true
 fi
 
+if [ "${#CHANGED_WORKFLOW_FILES[@]}" -gt 0 ]; then
+  RUN_WORKFLOW_VALIDATION=true
+fi
+
 if [ "$RUN_BACKEND" = true ]; then
   run_step "Running formatter" dotnet tool run fantomas .
   run_step "Building solution (Release)" dotnet build Freetool.sln -c Release
+  run_step "Ensuring OpenFGA is running for backend integration tests" ensure_openfga_ready
   run_step "Running backend tests" dotnet test Freetool.sln
 else
   echo "No changes under src/; skipping backend verification steps."
@@ -148,6 +208,18 @@ if [ "$RUN_FRONTEND" = true ]; then
   run_step "Running frontend format" bash -lc "cd www && npm run format"
 else
   echo "No changes under www/; skipping frontend verification steps."
+fi
+
+if [ "$RUN_WORKFLOW_VALIDATION" = true ]; then
+  if ! command -v actionlint >/dev/null 2>&1; then
+    echo "actionlint is required to validate changed GitHub Actions workflows."
+    echo "Install: https://github.com/rhysd/actionlint"
+    exit 1
+  fi
+
+  run_step "Validating changed GitHub Actions workflows" actionlint "${CHANGED_WORKFLOW_FILES[@]}"
+else
+  echo "No changes under .github/workflows/; skipping workflow validation."
 fi
 
 if ! command -v gh >/dev/null 2>&1; then

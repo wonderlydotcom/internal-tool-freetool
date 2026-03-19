@@ -91,41 +91,39 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
         | Some(signingKeys, expiresAt) when expiresAt > now -> Some signingKeys
         | _ -> None
 
-    let refreshSigningKeysAsync (httpClientFactory: IHttpClientFactory) (jwtCertsUrl: string) =
-        task {
+    let refreshSigningKeysAsync (httpClientFactory: IHttpClientFactory) (jwtCertsUrl: string) = task {
+        try
+            use client = httpClientFactory.CreateClient()
+            let! response = client.GetAsync(jwtCertsUrl)
+            response.EnsureSuccessStatusCode() |> ignore
+            let! content = response.Content.ReadAsStringAsync()
+
+            let keySet = JsonWebKeySet(content)
+            let signingKeys = keySet.GetSigningKeys() |> Seq.toList
+
+            if List.isEmpty signingKeys then
+                return Error "No signing keys returned by IAP certs endpoint"
+            else
+                // Google rotates keys infrequently; a 1-hour cache keeps validation fast while remaining fresh.
+                cachedSigningKeys <- Some(signingKeys, DateTimeOffset.UtcNow.AddHours(1.0))
+                return Ok signingKeys
+        with ex ->
+            return Error ex.Message
+    }
+
+    let getSigningKeysAsync (httpClientFactory: IHttpClientFactory) (jwtCertsUrl: string) = task {
+        match getCachedSigningKeys () with
+        | Some signingKeys -> return Ok signingKeys
+        | None ->
+            do! keyCacheSemaphore.WaitAsync()
+
             try
-                use client = httpClientFactory.CreateClient()
-                let! response = client.GetAsync(jwtCertsUrl)
-                response.EnsureSuccessStatusCode() |> ignore
-                let! content = response.Content.ReadAsStringAsync()
-
-                let keySet = JsonWebKeySet(content)
-                let signingKeys = keySet.GetSigningKeys() |> Seq.toList
-
-                if List.isEmpty signingKeys then
-                    return Error "No signing keys returned by IAP certs endpoint"
-                else
-                    // Google rotates keys infrequently; a 1-hour cache keeps validation fast while remaining fresh.
-                    cachedSigningKeys <- Some(signingKeys, DateTimeOffset.UtcNow.AddHours(1.0))
-                    return Ok signingKeys
-            with ex ->
-                return Error ex.Message
-        }
-
-    let getSigningKeysAsync (httpClientFactory: IHttpClientFactory) (jwtCertsUrl: string) =
-        task {
-            match getCachedSigningKeys () with
-            | Some signingKeys -> return Ok signingKeys
-            | None ->
-                do! keyCacheSemaphore.WaitAsync()
-
-                try
-                    match getCachedSigningKeys () with
-                    | Some signingKeys -> return Ok signingKeys
-                    | None -> return! refreshSigningKeysAsync httpClientFactory jwtCertsUrl
-                finally
-                    keyCacheSemaphore.Release() |> ignore
-        }
+                match getCachedSigningKeys () with
+                | Some signingKeys -> return Ok signingKeys
+                | None -> return! refreshSigningKeysAsync httpClientFactory jwtCertsUrl
+            finally
+                keyCacheSemaphore.Release() |> ignore
+    }
 
     let validateJwtToken
         (jwtAssertion: string)
@@ -167,52 +165,57 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
         with ex ->
             Error ex.Message
 
-    let validateIapJwtAsync (context: HttpContext) (configuration: IConfiguration) =
-        task {
-            let jwtAssertionHeader =
-                configuration[ConfigurationKeys.Auth.IAP.JwtAssertionHeader]
-                |> Option.ofObj
-                |> Option.defaultValue defaultJwtAssertionHeader
+    let validateIapJwtAsync (context: HttpContext) (configuration: IConfiguration) = task {
+        let jwtAssertionHeader =
+            configuration[ConfigurationKeys.Auth.IAP.JwtAssertionHeader]
+            |> Option.ofObj
+            |> Option.defaultValue defaultJwtAssertionHeader
 
-            let jwtAudience =
-                configuration[ConfigurationKeys.Auth.IAP.JwtAudience] |> Option.ofObj
+        let jwtAudience =
+            configuration[ConfigurationKeys.Auth.IAP.JwtAudience] |> Option.ofObj
 
-            let jwtIssuer =
-                configuration[ConfigurationKeys.Auth.IAP.JwtIssuer]
-                |> Option.ofObj
-                |> Option.defaultValue defaultJwtIssuer
+        let jwtIssuer =
+            configuration[ConfigurationKeys.Auth.IAP.JwtIssuer]
+            |> Option.ofObj
+            |> Option.defaultValue defaultJwtIssuer
 
-            let jwtCertsUrl =
-                configuration[ConfigurationKeys.Auth.IAP.JwtCertsUrl]
-                |> Option.ofObj
-                |> Option.defaultValue defaultJwtCertsUrl
+        let jwtCertsUrl =
+            configuration[ConfigurationKeys.Auth.IAP.JwtCertsUrl]
+            |> Option.ofObj
+            |> Option.defaultValue defaultJwtCertsUrl
 
-            match extractHeader jwtAssertionHeader context with
-            | None -> return Error(MissingJwtHeader jwtAssertionHeader)
-            | Some jwtAssertion ->
-                match jwtAudience with
-                | None
-                | Some "" ->
-                    return Error(Misconfigured "Auth:IAP:JwtAudience is required when JWT validation is enabled")
-                | Some audience when String.IsNullOrWhiteSpace audience ->
-                    return Error(Misconfigured "Auth:IAP:JwtAudience is required when JWT validation is enabled")
-                | Some audience ->
-                    let httpClientFactory =
-                        context.RequestServices.GetRequiredService<IHttpClientFactory>()
+        match extractHeader jwtAssertionHeader context with
+        | None -> return Error(MissingJwtHeader jwtAssertionHeader)
+        | Some jwtAssertion ->
+            match jwtAudience with
+            | None
+            | Some "" -> return Error(Misconfigured "Auth:IAP:JwtAudience is required when JWT validation is enabled")
+            | Some audience when String.IsNullOrWhiteSpace audience ->
+                return Error(Misconfigured "Auth:IAP:JwtAudience is required when JWT validation is enabled")
+            | Some audience ->
+                let httpClientFactory =
+                    context.RequestServices.GetRequiredService<IHttpClientFactory>()
 
-                    let! signingKeysResult = getSigningKeysAsync httpClientFactory jwtCertsUrl
+                let! signingKeysResult = getSigningKeysAsync httpClientFactory jwtCertsUrl
 
-                    match signingKeysResult with
-                    | Error message -> return Error(KeyFetchFailed message)
-                    | Ok signingKeys ->
-                        return
-                            match validateJwtToken jwtAssertion audience jwtIssuer signingKeys with
-                            | Ok principal -> Ok principal
-                            | Error message -> Error(InvalidToken message)
-        }
+                match signingKeysResult with
+                | Error message -> return Error(KeyFetchFailed message)
+                | Ok signingKeys ->
+                    return
+                        match validateJwtToken jwtAssertion audience jwtIssuer signingKeys with
+                        | Ok principal -> Ok principal
+                        | Error message -> Error(InvalidToken message)
+    }
 
-    member _.InvokeAsync(context: HttpContext) : Task =
-        task {
+    member _.InvokeAsync(context: HttpContext) : Task = task {
+        let requestPath = context.Request.Path.Value
+
+        if
+            not (String.IsNullOrWhiteSpace(requestPath))
+            && requestPath.StartsWith("/health", StringComparison.OrdinalIgnoreCase)
+        then
+            do! next.Invoke context
+        else
             let currentActivity = Option.ofObj Activity.Current
             let configuration = context.RequestServices.GetRequiredService<IConfiguration>()
 
@@ -338,18 +341,21 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
                             context.RequestServices.GetRequiredService<IIdentityProvisioningService>()
 
                         let! result =
-                            provisioningService.EnsureUserAsync
-                                { Email = userEmail
-                                  Name = userName
-                                  ProfilePicUrl = resolvedProfilePicUrl
-                                  GroupKeys = groupKeys
-                                  Source = "iap" }
+                            provisioningService.EnsureUserAsync {
+                                Email = userEmail
+                                Name = userName
+                                ProfilePicUrl = resolvedProfilePicUrl
+                                GroupKeys = groupKeys
+                                Source = "iap"
+                            }
 
                         match result with
                         | Error(InvalidEmailFormat errorMessage) ->
                             Tracing.addAttribute currentActivity "iap.auth.error" "invalid_email_format"
                             Tracing.addAttribute currentActivity "iap.auth.user_email" userEmail
+
                             Tracing.setSpanStatus currentActivity false (Some "Invalid email format in IAP header")
+
                             logger.LogWarning("Failed to provision IAP user {Email}: {Error}", userEmail, errorMessage)
                             context.Response.StatusCode <- 401
                             do! context.Response.WriteAsync $"Unauthorized: Invalid {emailHeader}"
@@ -383,4 +389,4 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
                             Tracing.addAttribute currentActivity "iap.auth.success" "true"
                             Tracing.setSpanStatus currentActivity true None
                             do! next.Invoke context
-        }
+    }

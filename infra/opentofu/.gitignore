@@ -1,5 +1,5 @@
 .terraform/
-.terraform.lock.hcl
+backend.gcs.hcl
 *.tfstate
 *.tfstate.*
 override.tf

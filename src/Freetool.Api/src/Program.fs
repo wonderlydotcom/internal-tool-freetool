@@ -9,6 +9,7 @@ open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.StaticFiles
 open System.Text.Json.Serialization
 open System.Diagnostics
+open System
 open OpenTelemetry.Resources
 open OpenTelemetry.Trace
 open OpenTelemetry.Exporter
@@ -32,45 +33,45 @@ open Freetool.Api.Services
 /// This catches bugs where a new event type is added to the DU but not to fromString.
 let private validateEventTypeRegistry (logger: ILogger) =
     // List all known event types that should be registered
-    let allEventTypes =
-        [ // User events
-          EventType.UserEvents UserCreatedEvent
-          EventType.UserEvents UserUpdatedEvent
-          EventType.UserEvents UserDeletedEvent
-          EventType.UserEvents UserInvitedEvent
-          EventType.UserEvents UserActivatedEvent
-          // App events
-          EventType.AppEvents AppCreatedEvent
-          EventType.AppEvents AppUpdatedEvent
-          EventType.AppEvents AppDeletedEvent
-          EventType.AppEvents AppRestoredEvent
-          // Dashboard events
-          EventType.DashboardEvents DashboardCreatedEvent
-          EventType.DashboardEvents DashboardUpdatedEvent
-          EventType.DashboardEvents DashboardDeletedEvent
-          EventType.DashboardEvents DashboardPreparedEvent
-          EventType.DashboardEvents DashboardPrepareFailedEvent
-          EventType.DashboardEvents DashboardActionExecutedEvent
-          EventType.DashboardEvents DashboardActionFailedEvent
-          // Resource events
-          EventType.ResourceEvents ResourceCreatedEvent
-          EventType.ResourceEvents ResourceUpdatedEvent
-          EventType.ResourceEvents ResourceDeletedEvent
-          EventType.ResourceEvents ResourceRestoredEvent
-          // Folder events
-          EventType.FolderEvents FolderCreatedEvent
-          EventType.FolderEvents FolderUpdatedEvent
-          EventType.FolderEvents FolderDeletedEvent
-          EventType.FolderEvents FolderRestoredEvent
-          // Run events
-          EventType.RunEvents RunCreatedEvent
-          EventType.RunEvents RunStatusChangedEvent
-          // Space events
-          EventType.SpaceEvents SpaceCreatedEvent
-          EventType.SpaceEvents SpaceUpdatedEvent
-          EventType.SpaceEvents SpaceDeletedEvent
-          EventType.SpaceEvents SpacePermissionsChangedEvent
-          EventType.SpaceEvents SpaceDefaultMemberPermissionsChangedEvent ]
+    let allEventTypes = [ // User events
+        EventType.UserEvents UserCreatedEvent
+        EventType.UserEvents UserUpdatedEvent
+        EventType.UserEvents UserDeletedEvent
+        EventType.UserEvents UserInvitedEvent
+        EventType.UserEvents UserActivatedEvent
+        // App events
+        EventType.AppEvents AppCreatedEvent
+        EventType.AppEvents AppUpdatedEvent
+        EventType.AppEvents AppDeletedEvent
+        EventType.AppEvents AppRestoredEvent
+        // Dashboard events
+        EventType.DashboardEvents DashboardCreatedEvent
+        EventType.DashboardEvents DashboardUpdatedEvent
+        EventType.DashboardEvents DashboardDeletedEvent
+        EventType.DashboardEvents DashboardPreparedEvent
+        EventType.DashboardEvents DashboardPrepareFailedEvent
+        EventType.DashboardEvents DashboardActionExecutedEvent
+        EventType.DashboardEvents DashboardActionFailedEvent
+        // Resource events
+        EventType.ResourceEvents ResourceCreatedEvent
+        EventType.ResourceEvents ResourceUpdatedEvent
+        EventType.ResourceEvents ResourceDeletedEvent
+        EventType.ResourceEvents ResourceRestoredEvent
+        // Folder events
+        EventType.FolderEvents FolderCreatedEvent
+        EventType.FolderEvents FolderUpdatedEvent
+        EventType.FolderEvents FolderDeletedEvent
+        EventType.FolderEvents FolderRestoredEvent
+        // Run events
+        EventType.RunEvents RunCreatedEvent
+        EventType.RunEvents RunStatusChangedEvent
+        // Space events
+        EventType.SpaceEvents SpaceCreatedEvent
+        EventType.SpaceEvents SpaceUpdatedEvent
+        EventType.SpaceEvents SpaceDeletedEvent
+        EventType.SpaceEvents SpacePermissionsChangedEvent
+        EventType.SpaceEvents SpaceDefaultMemberPermissionsChangedEvent
+    ]
 
     let mutable hasErrors = false
 
@@ -178,6 +179,35 @@ let ensureOpenFgaStore
                 )
 
                 createAndSaveNewStore logger connectionString apiUrl
+
+let private ensureOpenFgaStoreWithRetry
+    (logger: ILogger)
+    (connectionString: string)
+    (apiUrl: string)
+    (configuredStoreId: string)
+    : string =
+    let maxAttempts = 20
+    let retryDelay = System.TimeSpan.FromSeconds(2.0)
+
+    let rec attempt currentAttempt =
+        try
+            ensureOpenFgaStore logger connectionString apiUrl configuredStoreId
+        with ex ->
+            if currentAttempt >= maxAttempts then
+                raise ex
+            else
+                logger.LogWarning(
+                    ex,
+                    "OpenFGA store initialization failed on attempt {Attempt}/{MaxAttempts}. Retrying in {DelaySeconds} seconds...",
+                    currentAttempt,
+                    maxAttempts,
+                    retryDelay.TotalSeconds
+                )
+
+                System.Threading.Thread.Sleep(retryDelay)
+                attempt (currentAttempt + 1)
+
+    attempt 1
 
 [<EntryPoint>]
 let main args =
@@ -301,7 +331,7 @@ let main args =
 
     let actualStoreId =
         try
-            ensureOpenFgaStore startupLogger connectionString openFgaApiUrl configuredStoreId
+            ensureOpenFgaStoreWithRetry startupLogger connectionString openFgaApiUrl configuredStoreId
         with ex ->
             startupLogger.LogWarning(
                 "Could not ensure OpenFGA store exists: {Error}. Using configured store ID (if any). Authorization may fail.",
@@ -473,10 +503,11 @@ let main args =
                     let spaceId = Space.getId space
                     let spaceIdStr = spaceId.Value.ToString()
 
-                    let tuple =
-                        { Subject = Organization "default"
-                          Relation = SpaceOrganization
-                          Object = SpaceObject spaceIdStr }
+                    let tuple = {
+                        Subject = Organization "default"
+                        Relation = SpaceOrganization
+                        Object = SpaceObject spaceIdStr
+                    }
 
                     let relationTask = authService.CreateRelationshipsAsync([ tuple ])
                     relationTask.Wait()
@@ -561,6 +592,9 @@ let main args =
         app.UseMiddleware<DevAuthMiddleware>() |> ignore
     else
         app.UseMiddleware<IapAuthMiddleware>() |> ignore
+
+    app.MapGet("/healthy", Func<IResult>(fun () -> Results.Ok())) |> ignore
+    app.MapGet("/healthz", Func<IResult>(fun () -> Results.Ok())) |> ignore
 
     app.MapControllers() |> ignore
 
