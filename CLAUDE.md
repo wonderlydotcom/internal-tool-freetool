@@ -6,6 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Freetool is an open-source internal tools platform (Retool alternative) built with F# and ASP.NET Core. The backend uses **Onion Architecture** with functional design patterns, while the frontend (in `www/`) is a React/TypeScript SPA using Vite, React Router, and shadcn/ui components.
 
+## Shared MCP Skills
+
+Use the deployed `internal-tools-mcp` server as the canonical source for shared internal-tools skills in this repo.
+
+- Codex reads [`.codex/config.toml`](./.codex/config.toml).
+- Claude Code reads [`.mcp.json`](./.mcp.json) and [`.claude/settings.json`](./.claude/settings.json).
+- Set `INTERNAL_TOOLS_MCP_BEARER_TOKEN` before starting either client.
+- Keep `freetool-controller-authoring`, `freetool-iap-auth-architecture`, and `freetool-openfga-hexagonal-architecture` as repo-local skills.
+- Treat the remaining shared folders under `.agents/skills` as transitional duplicates until the deletion wave.
+
 ## Essential Commands
 
 ### Backend (F#/.NET)

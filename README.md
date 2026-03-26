@@ -2,6 +2,16 @@
 
 A free, open-source alternative to Retool for building internal tools and dashboards. Freetool helps companies create CRUD interfaces around their internal APIs with authentication, authorization, and audit logging - all without requiring developers to build custom admin interfaces.
 
+## Shared MCP Skills
+
+This repo now uses the deployed `internal-tools-mcp` server as the canonical source for shared internal-tools skills.
+
+- Codex reads [`.codex/config.toml`](./.codex/config.toml).
+- Claude Code reads [`.mcp.json`](./.mcp.json) and [`.claude/settings.json`](./.claude/settings.json).
+- Set `INTERNAL_TOOLS_MCP_BEARER_TOKEN` before launching either client.
+- Keep `freetool-controller-authoring`, `freetool-iap-auth-architecture`, and `freetool-openfga-hexagonal-architecture` as repo-local skills.
+- Treat the remaining shared folders under `.agents/skills` as transitional duplicates until the deletion wave.
+
 # Contributing
 
 ## 🏗️ Architecture

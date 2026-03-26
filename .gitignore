@@ -227,3 +227,7 @@ terraform.tfvars
 
 # Claude Code
 .claude/
+!/.claude/
+/.claude/*
+!/.claude/settings.local.json
+!/.claude/settings.json
