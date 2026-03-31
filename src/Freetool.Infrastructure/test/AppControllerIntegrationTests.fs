@@ -602,6 +602,47 @@ let ``GetAppById returns 200 with app data`` () : Task = task {
 }
 
 [<Fact>]
+let ``GetAppById falls back to persisted moderator when OpenFGA tuple is missing`` () : Task = task {
+    let userId = UserId.NewId()
+    let spaceId = SpaceId.NewId()
+    let folderId = FolderId.NewId()
+    let resourceId = ResourceId.NewId()
+    let appId = AppId.NewId()
+
+    let folder = createTestFolder spaceId folderId
+    let app = createTestApp folderId resourceId appId
+    let space = createTestSpace spaceId userId
+
+    let checkPermission _ _ _ = false
+
+    let getAppById id =
+        Task.FromResult(if id = appId then Some app else None)
+
+    let getFolderById id =
+        Task.FromResult(if id = folderId then Some folder else None)
+
+    let getResourceById _ = Task.FromResult(None)
+
+    let handleCommand cmd =
+        match cmd with
+        | GetAppById _ ->
+            let appData = createAppData appId folderId resourceId
+            Task.FromResult(Ok(AppResult appData))
+        | _ -> Task.FromResult(Error(NotFound "Command not supported"))
+
+    let controller =
+        createTestController checkPermission getAppById getFolderById getResourceById [ space ] handleCommand userId
+
+    let! result = controller.GetAppById(appId.Value.ToString())
+
+    match result with
+    | :? OkObjectResult as okResult ->
+        Assert.Equal(200, okResult.StatusCode.Value)
+        Assert.NotNull(okResult.Value)
+    | _ -> Assert.True(false, "Expected OkObjectResult")
+}
+
+[<Fact>]
 let ``GetAppById returns 404 for nonexistent`` () : Task = task {
     // Arrange
     let userId = UserId.NewId()
@@ -789,6 +830,7 @@ let ``DeleteApp returns 204 on success`` () : Task = task {
 let ``DeleteApp returns 403 without permission`` () : Task = task {
     // Arrange
     let userId = UserId.NewId()
+    let moderatorUserId = UserId.NewId()
     let spaceId = SpaceId.NewId()
     let folderId = FolderId.NewId()
     let resourceId = ResourceId.NewId()
@@ -796,7 +838,7 @@ let ``DeleteApp returns 403 without permission`` () : Task = task {
 
     let folder = createTestFolder spaceId folderId
     let app = createTestApp folderId resourceId appId
-    let space = createTestSpace spaceId userId
+    let space = createTestSpace spaceId moderatorUserId
 
     // No permissions granted
     let checkPermission _ _ _ = false
@@ -886,6 +928,7 @@ let ``UpdateAppName returns 200 on success`` () : Task = task {
 let ``UpdateAppName returns 403 without edit permission`` () : Task = task {
     // Arrange
     let userId = UserId.NewId()
+    let moderatorUserId = UserId.NewId()
     let spaceId = SpaceId.NewId()
     let folderId = FolderId.NewId()
     let resourceId = ResourceId.NewId()
@@ -893,7 +936,7 @@ let ``UpdateAppName returns 403 without edit permission`` () : Task = task {
 
     let folder = createTestFolder spaceId folderId
     let app = createTestApp folderId resourceId appId
-    let space = createTestSpace spaceId userId
+    let space = createTestSpace spaceId moderatorUserId
 
     // No permissions granted
     let checkPermission _ _ _ = false

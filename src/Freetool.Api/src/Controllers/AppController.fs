@@ -61,10 +61,12 @@ type AppController
             let userId = this.CurrentUserId
 
             let! hasPermission =
-                authorizationService.CheckPermissionAsync
-                    (User(userId.Value.ToString()))
+                SpacePermissionAuthorization.hasSpacePermissionWithModeratorFallback
+                    authorizationService
+                    spaceRepository
+                    userId
+                    spaceId
                     permission
-                    (SpaceObject(spaceId.Value.ToString()))
 
             if hasPermission then
                 return Ok()
