@@ -76,13 +76,27 @@ type MockFolderRepository(folder: ValidatedFolder option) =
         member _.RestoreWithChildrenAsync _ = task { return Ok 0 }
         member _.CheckNameConflictAsync _ _ _ = task { return false }
 
-type MockSpaceRepository() =
+type MockSpaceRepository(spaceOption: ValidatedSpace option) =
     interface ISpaceRepository with
-        member _.GetByIdAsync _ = task { return None }
+        member _.GetByIdAsync spaceId = task {
+            return
+                match spaceOption with
+                | Some persistedSpace when persistedSpace.State.Id = spaceId -> Some persistedSpace
+                | _ -> None
+        }
+
         member _.GetByNameAsync _ = task { return None }
-        member _.GetAllAsync _ _ = task { return [] }
+        member _.GetAllAsync _ _ = task { return spaceOption |> Option.toList }
+
         member _.GetByUserIdAsync _ = task { return [] }
-        member _.GetByModeratorUserIdAsync _ = task { return [] }
+
+        member _.GetByModeratorUserIdAsync userId = task {
+            return
+                match spaceOption with
+                | Some persistedSpace when persistedSpace.State.ModeratorUserId = userId -> [ persistedSpace ]
+                | _ -> []
+        }
+
         member _.AddAsync _ = task { return Ok() }
         member _.UpdateAsync _ = task { return Ok() }
         member _.DeleteAsync _ = task { return Ok() }
@@ -137,6 +151,19 @@ let private createTestDashboard (actorUserId: UserId) (folderId: FolderId) : Val
     | Ok dashboard -> dashboard
     | Error error -> failwith $"Failed to create test dashboard: {error}"
 
+let private createTestSpace (spaceId: SpaceId) (moderatorUserId: UserId) : ValidatedSpace = {
+    State = {
+        Id = spaceId
+        Name = "Operations"
+        ModeratorUserId = moderatorUserId
+        CreatedAt = DateTime.UtcNow
+        UpdatedAt = DateTime.UtcNow
+        IsDeleted = false
+        MemberIds = []
+    }
+    UncommittedEvents = []
+}
+
 let private createTestUser () : ValidatedUser =
     let email =
         Email.Create(Some "integration@test.dev") |> Result.toOption |> Option.get
@@ -146,6 +173,7 @@ let private createTestUser () : ValidatedUser =
 let private createController
     (dashboard: ValidatedDashboard)
     (folder: ValidatedFolder)
+    (space: ValidatedSpace option)
     (authFn: AuthSubject -> AuthRelation -> AuthObject -> bool)
     (user: ValidatedUser option)
     (commandHandlerFn: DashboardCommand -> Task<Result<DashboardCommandResult, DomainError>>)
@@ -155,7 +183,7 @@ let private createController
         DashboardController(
             MockDashboardRepository(Some dashboard),
             MockFolderRepository(Some folder),
-            MockSpaceRepository(),
+            MockSpaceRepository(space),
             MockUserRepository(user),
             MockAuthorizationService(authFn),
             MockDashboardCommandHandler(commandHandlerFn)
@@ -179,6 +207,7 @@ let ``PrepareDashboard returns forbidden when user lacks run_app`` () : Task = t
         createController
             dashboard
             folder
+            None
             (fun _ relation _ ->
                 match relation with
                 | DashboardRun -> true
@@ -211,6 +240,7 @@ let ``PrepareDashboard returns success when runtime permissions are granted`` ()
         createController
             dashboard
             folder
+            None
             (fun _ relation _ ->
                 match relation with
                 | DashboardRun
@@ -246,6 +276,47 @@ let ``PrepareDashboard returns success when runtime permissions are granted`` ()
 }
 
 [<Fact>]
+let ``PrepareDashboard falls back to persisted moderator when OpenFGA tuples are missing`` () : Task = task {
+    let actorUserId = UserId.NewId()
+    let spaceId = SpaceId.NewId()
+    let folderId = FolderId.NewId()
+    let folder = createTestFolder spaceId folderId
+    let dashboard = createTestDashboard actorUserId folderId
+    let space = createTestSpace spaceId actorUserId
+    let mutable commandInvoked = false
+
+    let controller =
+        createController
+            dashboard
+            folder
+            (Some space)
+            (fun _ _ _ -> false)
+            (Some(createTestUser ()))
+            (fun _ ->
+                commandInvoked <- true
+
+                task {
+                    return
+                        Ok(
+                            DashboardPrepareResult {
+                                PrepareRunId = Guid.NewGuid().ToString()
+                                Status = "Success"
+                                Response = Some "{}"
+                                ErrorMessage = None
+                            }
+                        )
+                })
+            actorUserId
+
+    let! result = controller.PrepareDashboard(dashboard.State.Id.Value.ToString(), { LoadInputs = [] })
+
+    let okResult = Assert.IsType<OkObjectResult>(result)
+    let payload = Assert.IsType<DashboardPrepareResponseDto>(okResult.Value)
+    Assert.Equal("Success", payload.Status)
+    Assert.True(commandInvoked)
+}
+
+[<Fact>]
 let ``RunDashboardAction returns bad request when actionId is invalid`` () : Task = task {
     let actorUserId = UserId.NewId()
     let spaceId = SpaceId.NewId()
@@ -258,6 +329,7 @@ let ``RunDashboardAction returns bad request when actionId is invalid`` () : Tas
         createController
             dashboard
             folder
+            None
             (fun _ _ _ -> true)
             (Some(createTestUser ()))
             (fun _ ->
@@ -294,6 +366,7 @@ let ``RunDashboardAction returns success when runtime permissions are granted`` 
         createController
             dashboard
             folder
+            None
             (fun _ relation _ ->
                 match relation with
                 | DashboardRun
