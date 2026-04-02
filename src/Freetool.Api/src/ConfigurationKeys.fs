@@ -29,6 +29,9 @@ module ConfigurationKeys =
             let ValidateJwt = "Auth:IAP:ValidateJwt"
 
             [<Literal>]
+            let PlatformJwtAudience = "IAP_JWT_AUDIENCE"
+
+            [<Literal>]
             let EmailHeader = "Auth:IAP:EmailHeader"
 
             [<Literal>]

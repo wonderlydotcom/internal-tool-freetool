@@ -4,6 +4,7 @@ open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.DependencyInjection
 open System.Threading.Tasks
 open System.Diagnostics
+open Freetool.Api.Auth
 open Freetool.Application.Interfaces
 open Freetool.Domain.ValueObjects
 open Freetool.Api.Tracing
@@ -38,16 +39,28 @@ type DevAuthMiddleware(next: RequestDelegate) =
                 Tracing.addAttribute currentActivity "dev.auth.error" "missing_user_id_header"
                 Tracing.addAttribute currentActivity "dev.auth.header" DEV_USER_ID_HEADER
                 Tracing.setSpanStatus currentActivity false (Some "Missing X-Dev-User-Id header")
-                context.Response.StatusCode <- 401
-                do! context.Response.WriteAsync $"Unauthorized: Missing {DEV_USER_ID_HEADER} header"
+                do!
+                    ProblemResponses.write
+                        context
+                        StatusCodes.Status401Unauthorized
+                        "missing_dev_user_id_header"
+                        "Unauthorized"
+                        $"Missing {DEV_USER_ID_HEADER} header."
+                        [ "header", DEV_USER_ID_HEADER ]
             | Some userIdStr ->
                 match System.Guid.TryParse userIdStr with
                 | false, _ ->
                     Tracing.addAttribute currentActivity "dev.auth.error" "invalid_user_id_format"
                     Tracing.addAttribute currentActivity "dev.auth.user_id" userIdStr
                     Tracing.setSpanStatus currentActivity false (Some "Invalid user ID format")
-                    context.Response.StatusCode <- 401
-                    do! context.Response.WriteAsync "Unauthorized: Invalid user ID format"
+                    do!
+                        ProblemResponses.write
+                            context
+                            StatusCodes.Status401Unauthorized
+                            "invalid_dev_user_id"
+                            "Unauthorized"
+                            "Invalid user ID format."
+                            []
                 | true, guid ->
                     let userId = UserId.FromGuid guid
                     let userRepository = context.RequestServices.GetRequiredService<IUserRepository>()
@@ -58,10 +71,28 @@ type DevAuthMiddleware(next: RequestDelegate) =
                         Tracing.addAttribute currentActivity "dev.auth.error" "user_not_found"
                         Tracing.addAttribute currentActivity "dev.auth.user_id" userIdStr
                         Tracing.setSpanStatus currentActivity false (Some "User not found")
-                        context.Response.StatusCode <- 401
-                        do! context.Response.WriteAsync "Unauthorized: User not found"
+                        do!
+                            ProblemResponses.write
+                                context
+                                StatusCodes.Status401Unauthorized
+                                "dev_user_not_found"
+                                "Unauthorized"
+                                "User not found."
+                                []
                     | Some user ->
                         context.Items.["UserId"] <- user.State.Id
+
+                        RequestUserContext.set
+                            context
+                            {
+                                UserId = Some user.State.Id
+                                Name = Some user.State.Name
+                                Email = user.State.Email
+                                Profile = user.State.ProfilePicUrl
+                                GroupKeys = []
+                                AuthenticationSource = "development"
+                            }
+
                         Tracing.addAttribute currentActivity "dev.auth.user_id" userIdStr
                         Tracing.addAttribute currentActivity "user.id" (user.State.Id.Value.ToString())
                         Tracing.addAttribute currentActivity "dev.auth.success" "true"

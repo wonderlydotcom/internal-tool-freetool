@@ -895,8 +895,8 @@ At runtime, authentication and authorization flow works like this:
 
 1. User accesses the app through the HTTPS load balancer and Kubernetes ingress protected by IAP.
 2. IAP injects identity headers (`X-Goog-Authenticated-User-Email`, etc.) and JWT assertion header.
-3. `IapAuthMiddleware` validates the IAP JWT assertion (`Auth:IAP:*` config).
-4. Middleware extracts user identity and IAP group headers.
+3. `IapAuthMiddleware` validates the IAP JWT assertion using `Auth:IAP:*` config, with fallback to `IAP_JWT_AUDIENCE`.
+4. Middleware writes a typed normalized request-user context and extracts IAP group headers.
 5. If Google Directory integration is enabled (`Auth:GoogleDirectory:Enabled=true`), `GoogleDirectoryIdentityService`:
    - obtains a token from service account credentials (ADC or credentials file),
    - optionally impersonates delegated admin user (`AdminUserEmail`) for domain-wide delegation,
@@ -917,6 +917,17 @@ Minimum production settings:
 Auth__IAP__ValidateJwt=true
 Auth__IAP__JwtAudience=/projects/<project-number>/global/backendServices/<backend-service-id>
 ```
+
+Or provide the platform contract value directly and let the app map it:
+
+```bash
+IAP_JWT_AUDIENCE=/projects/<project-number>/global/backendServices/<backend-service-id>
+```
+
+For machine callers:
+
+- `GET /__api/me` returns the normalized current-user context.
+- auth failures now return `application/problem+json` with a stable `code` field.
 
 To enable Google Directory lookups:
 

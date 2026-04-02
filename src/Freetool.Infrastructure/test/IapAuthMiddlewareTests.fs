@@ -2,6 +2,7 @@ module Freetool.Infrastructure.Tests.IapAuthMiddlewareTests
 
 open System
 open System.IO
+open System.Text.Json
 open System.Threading.Tasks
 open Xunit
 open Microsoft.AspNetCore.Http
@@ -14,6 +15,7 @@ open Freetool.Domain.Entities
 open Freetool.Domain.ValueObjects
 open Freetool.Application.DTOs
 open Freetool.Application.Interfaces
+open Freetool.Api.Auth
 open Freetool.Api.Middleware
 open Freetool.Api.Services
 
@@ -218,6 +220,10 @@ let getResponseBody (context: HttpContext) =
     use reader = new StreamReader(context.Response.Body)
     reader.ReadToEnd()
 
+let getResponseCode (context: HttpContext) =
+    use document = getResponseBody context |> JsonDocument.Parse
+    document.RootElement.GetProperty("code").GetString()
+
 let createMiddleware () =
     let mutable nextCalled = false
 
@@ -295,8 +301,8 @@ let ``Returns 401 when IAP email header missing`` () : Task = task {
     Assert.Equal(401, context.Response.StatusCode)
     Assert.False(wasNextCalled ())
 
-    let body = getResponseBody context
-    Assert.Contains("X-Goog-Authenticated-User-Email", body)
+    Assert.Equal("application/problem+json", context.Response.ContentType)
+    Assert.Equal("missing_iap_email_header", getResponseCode context)
 }
 
 [<Fact>]
@@ -310,7 +316,7 @@ let ``Returns 401 when JWT validation enabled and JWT assertion header missing``
 
     setupServices context userRepo authService None [
         "Auth:IAP:ValidateJwt", "true"
-        "Auth:IAP:JwtAudience", "/projects/123/global/backendServices/456"
+        "IAP_JWT_AUDIENCE", "/projects/123/global/backendServices/456"
     ]
     |> ignore
 
@@ -321,8 +327,7 @@ let ``Returns 401 when JWT validation enabled and JWT assertion header missing``
     Assert.Equal(401, context.Response.StatusCode)
     Assert.False(wasNextCalled ())
 
-    let body = getResponseBody context
-    Assert.Contains("X-Goog-Iap-Jwt-Assertion", body)
+    Assert.Equal("missing_iap_jwt_assertion", getResponseCode context)
 }
 
 [<Fact>]
@@ -341,6 +346,8 @@ let ``Returns 401 when IAP email header empty`` () : Task = task {
 
     Assert.Equal(401, context.Response.StatusCode)
     Assert.False(wasNextCalled ())
+
+    Assert.Equal("missing_iap_email_header", getResponseCode context)
 }
 
 [<Fact>]
@@ -360,8 +367,7 @@ let ``Returns 401 when email format invalid`` () : Task = task {
     Assert.Equal(401, context.Response.StatusCode)
     Assert.False(wasNextCalled ())
 
-    let body = getResponseBody context
-    Assert.Contains("Invalid", body)
+    Assert.Equal("invalid_iap_email", getResponseCode context)
 }
 
 [<Fact>]
@@ -391,6 +397,14 @@ let ``Creates new user with IAP display name when email not in database`` () : T
     Assert.Equal(displayName, addedUsers.[0].State.Name)
 
     Assert.True(context.Items.ContainsKey("UserId"))
+
+    match RequestUserContext.tryGet context with
+    | None -> failwith "Expected request user context"
+    | Some requestUser ->
+        Assert.Equal(email, requestUser.Email)
+        Assert.Equal(Some displayName, requestUser.Name)
+        Assert.Empty(requestUser.GroupKeys)
+        Assert.Equal("iap", requestUser.AuthenticationSource)
 }
 
 [<Fact>]
@@ -417,6 +431,12 @@ let ``Sets UserId in HttpContext Items for existing user`` () : Task = task {
     Assert.True(context.Items.ContainsKey("UserId"))
     let userId = context.Items.["UserId"] :?> UserId
     Assert.Equal(existingUser.State.Id, userId)
+
+    match RequestUserContext.tryGet context with
+    | None -> failwith "Expected request user context"
+    | Some requestUser ->
+        Assert.Equal(email, requestUser.Email)
+        Assert.Equal(Some existingUser.State.Id, requestUser.UserId)
 }
 
 [<Fact>]
@@ -516,8 +536,7 @@ let ``Returns 500 when user creation fails`` () : Task = task {
     Assert.Equal(500, context.Response.StatusCode)
     Assert.False(wasNextCalled ())
 
-    let body = getResponseBody context
-    Assert.Contains("Failed to provision user", body)
+    Assert.Equal("iap_identity_provisioning_failed", getResponseCode context)
 }
 
 [<Fact>]
@@ -543,8 +562,7 @@ let ``Returns 500 when user activation fails`` () : Task = task {
     Assert.Equal(500, context.Response.StatusCode)
     Assert.False(wasNextCalled ())
 
-    let body = getResponseBody context
-    Assert.Contains("Failed to provision user", body)
+    Assert.Equal("iap_identity_provisioning_failed", getResponseCode context)
 }
 
 [<Fact>]

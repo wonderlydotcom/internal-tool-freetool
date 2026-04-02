@@ -2,6 +2,7 @@ module Freetool.Infrastructure.Tests.DevAuthMiddlewareTests
 
 open System
 open System.IO
+open System.Text.Json
 open System.Threading.Tasks
 open Xunit
 open Microsoft.AspNetCore.Http
@@ -11,6 +12,7 @@ open Freetool.Domain
 open Freetool.Domain.Entities
 open Freetool.Domain.ValueObjects
 open Freetool.Application.Interfaces
+open Freetool.Api.Auth
 open Freetool.Api.Middleware
 
 // ============================================================================
@@ -61,6 +63,10 @@ let getResponseBody (context: HttpContext) =
     context.Response.Body.Seek(0L, SeekOrigin.Begin) |> ignore
     use reader = new StreamReader(context.Response.Body)
     reader.ReadToEnd()
+
+let getResponseCode (context: HttpContext) =
+    use document = getResponseBody context |> JsonDocument.Parse
+    document.RootElement.GetProperty("code").GetString()
 
 let createMiddleware () =
     let mutable nextCalled = false
@@ -126,8 +132,7 @@ let ``Returns 401 when X-Dev-User-Id header missing`` () : Task = task {
     Assert.Equal(401, context.Response.StatusCode)
     Assert.False(wasNextCalled ())
 
-    let body = getResponseBody context
-    Assert.Contains("X-Dev-User-Id", body)
+    Assert.Equal("missing_dev_user_id_header", getResponseCode context)
 }
 
 [<Fact>]
@@ -150,8 +155,7 @@ let ``Returns 401 when X-Dev-User-Id is invalid GUID`` () : Task = task {
     Assert.Equal(401, context.Response.StatusCode)
     Assert.False(wasNextCalled ())
 
-    let body = getResponseBody context
-    Assert.Contains("Invalid user ID format", body)
+    Assert.Equal("invalid_dev_user_id", getResponseCode context)
 }
 
 [<Fact>]
@@ -176,8 +180,7 @@ let ``Returns 401 when user not found in database`` () : Task = task {
     Assert.Equal(401, context.Response.StatusCode)
     Assert.False(wasNextCalled ())
 
-    let body = getResponseBody context
-    Assert.Contains("User not found", body)
+    Assert.Equal("dev_user_not_found", getResponseCode context)
 }
 
 [<Fact>]
@@ -207,6 +210,13 @@ let ``Sets UserId in HttpContext Items for valid user`` () : Task = task {
     Assert.True(context.Items.ContainsKey("UserId"))
     let contextUserId = context.Items.["UserId"] :?> UserId
     Assert.Equal(userId, contextUserId)
+
+    match RequestUserContext.tryGet context with
+    | None -> failwith "Expected request user context"
+    | Some requestUser ->
+        Assert.Equal(Some userId, requestUser.UserId)
+        Assert.Equal("test@example.com", requestUser.Email)
+        Assert.Equal("development", requestUser.AuthenticationSource)
 }
 
 [<Fact>]
@@ -259,4 +269,5 @@ let ``Adds tracing attributes on authentication`` () : Task = task {
     // Assert
     Assert.True(wasNextCalled ())
     Assert.True(context.Items.ContainsKey("UserId"))
+    Assert.True(RequestUserContext.tryGet context |> Option.isSome)
 }

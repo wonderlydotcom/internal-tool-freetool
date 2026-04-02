@@ -24,6 +24,7 @@ open Freetool.Application.Services
 open Freetool.Domain.ValueObjects
 open Freetool.Domain.Entities
 open Freetool.Api
+open Freetool.Api.Auth
 open Freetool.Api.Tracing
 open Freetool.Api.Middleware
 open Freetool.Api.OpenApi
@@ -212,6 +213,16 @@ let private ensureOpenFgaStoreWithRetry
 [<EntryPoint>]
 let main args =
     let builder = WebApplication.CreateBuilder(args)
+    let runtimeSecretsPath = "/var/run/secrets/app"
+
+    builder.Configuration.AddKeyPerFile(runtimeSecretsPath, true) |> ignore
+
+    if
+        String.IsNullOrWhiteSpace(builder.Configuration[ConfigurationKeys.Auth.IAP.JwtAudience])
+        && not (String.IsNullOrWhiteSpace(builder.Configuration[ConfigurationKeys.Auth.IAP.PlatformJwtAudience]))
+    then
+        builder.Configuration[ConfigurationKeys.Auth.IAP.JwtAudience] <-
+            builder.Configuration[ConfigurationKeys.Auth.IAP.PlatformJwtAudience]
 
     // Create a startup logger for logging before app is built
     use startupLoggerFactory =
@@ -594,6 +605,24 @@ let main args =
         app.UseMiddleware<IapAuthMiddleware>() |> ignore
 
     app.MapGet("/healthy", Func<IResult>(fun () -> Results.Ok())) |> ignore
+
+    app.MapGet(
+        "/__api/me",
+        Func<HttpContext, IResult>(fun context ->
+            let requestUser = RequestUserContext.get context
+
+            Results.Json(
+                {|
+                    userId = requestUser.UserId |> Option.map (fun userId -> userId.Value.ToString())
+                    email = requestUser.Email
+                    name = requestUser.Name
+                    profile = requestUser.Profile
+                    groupKeys = requestUser.GroupKeys
+                    authenticationSource = requestUser.AuthenticationSource
+                |}
+            ))
+    )
+    |> ignore
 
     app.MapControllers() |> ignore
 

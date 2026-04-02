@@ -28,6 +28,8 @@
 
   <ItemGroup>
     <Compile Include="src/ConfigurationKeys.fs" />
+    <Compile Include="src/Auth/RequestUserContext.fs" />
+    <Compile Include="src/Auth/ProblemResponses.fs" />
     <Compile Include="src/Tracing/TracingExtensions.fs" />
     <Compile Include="src/Tracing/TracingAttributes.fs" />
     <Compile Include="src/Tracing/AutoTracing.fs" />
