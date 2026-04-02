@@ -13,6 +13,7 @@ open Microsoft.Extensions.Logging
 open System.IdentityModel.Tokens.Jwt
 open Microsoft.IdentityModel.Tokens
 open Freetool.Api
+open Freetool.Api.Auth
 open Freetool.Api.Services
 open Freetool.Api.Tracing
 
@@ -30,6 +31,9 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
     let defaultJwtAssertionHeader = "X-Goog-Iap-Jwt-Assertion"
     let defaultJwtIssuer = "https://cloud.google.com/iap"
     let defaultJwtCertsUrl = "https://www.gstatic.com/iap/verify/public_key-jwk"
+
+    let defaultPlatformJwtAudienceSetting =
+        ConfigurationKeys.Auth.IAP.PlatformJwtAudience
 
     let defaultEmailHeader = "X-Goog-Authenticated-User-Email"
     let defaultNameHeader = "X-Goog-Authenticated-User-Name"
@@ -75,6 +79,11 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
             | true, parsedValue -> parsedValue
             | false, _ -> fallbackValue
         | None -> fallbackValue
+
+    let getConfiguredString (configuration: IConfiguration) (key: string) =
+        configuration[key]
+        |> Option.ofObj
+        |> Option.bind (fun value -> if String.IsNullOrWhiteSpace value then None else Some value)
 
     let findEmailClaim (principal: ClaimsPrincipal) =
         [ "email"; ClaimTypes.Email ]
@@ -172,7 +181,8 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
             |> Option.defaultValue defaultJwtAssertionHeader
 
         let jwtAudience =
-            configuration[ConfigurationKeys.Auth.IAP.JwtAudience] |> Option.ofObj
+            getConfiguredString configuration ConfigurationKeys.Auth.IAP.JwtAudience
+            |> Option.orElseWith (fun () -> getConfiguredString configuration defaultPlatformJwtAudienceSetting)
 
         let jwtIssuer =
             configuration[ConfigurationKeys.Auth.IAP.JwtIssuer]
@@ -242,26 +252,54 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
                 Tracing.addAttribute currentActivity "iap.auth.error" "missing_jwt_assertion_header"
                 Tracing.addAttribute currentActivity "iap.auth.jwt_header" headerName
                 Tracing.setSpanStatus currentActivity false (Some "Missing IAP JWT assertion header")
-                context.Response.StatusCode <- 401
-                do! context.Response.WriteAsync $"Unauthorized: Missing or invalid {headerName}"
+
+                do!
+                    ProblemResponses.write
+                        context
+                        StatusCodes.Status401Unauthorized
+                        "missing_iap_jwt_assertion"
+                        "Unauthorized"
+                        $"Missing or invalid {headerName} header."
+                        [ "header", headerName ]
             | Error(Misconfigured errorMessage) ->
                 Tracing.addAttribute currentActivity "iap.auth.error" "jwt_validation_misconfigured"
                 Tracing.setSpanStatus currentActivity false (Some "IAP JWT validation is misconfigured")
                 logger.LogError("IAP JWT validation is misconfigured: {Error}", errorMessage)
-                context.Response.StatusCode <- 500
-                do! context.Response.WriteAsync "Internal Server Error: IAP JWT validation is misconfigured"
+
+                do!
+                    ProblemResponses.write
+                        context
+                        StatusCodes.Status500InternalServerError
+                        "iap_jwt_validation_misconfigured"
+                        "Internal Server Error"
+                        "IAP JWT validation is misconfigured."
+                        []
             | Error(KeyFetchFailed errorMessage) ->
                 Tracing.addAttribute currentActivity "iap.auth.error" "jwt_key_fetch_failed"
                 Tracing.setSpanStatus currentActivity false (Some "Failed to fetch IAP signing keys")
                 logger.LogError("Failed to fetch IAP signing keys: {Error}", errorMessage)
-                context.Response.StatusCode <- 500
-                do! context.Response.WriteAsync "Internal Server Error: Failed to validate IAP JWT assertion"
+
+                do!
+                    ProblemResponses.write
+                        context
+                        StatusCodes.Status500InternalServerError
+                        "iap_signing_keys_unavailable"
+                        "Internal Server Error"
+                        "Failed to validate the IAP JWT assertion."
+                        []
             | Error(InvalidToken errorMessage) ->
                 Tracing.addAttribute currentActivity "iap.auth.error" "invalid_jwt_assertion"
                 Tracing.setSpanStatus currentActivity false (Some "Invalid IAP JWT assertion")
                 logger.LogWarning("IAP JWT assertion validation failed: {Error}", errorMessage)
-                context.Response.StatusCode <- 401
-                do! context.Response.WriteAsync "Unauthorized: Invalid IAP JWT assertion"
+
+                do!
+                    ProblemResponses.write
+                        context
+                        StatusCodes.Status401Unauthorized
+                        "invalid_iap_jwt_assertion"
+                        "Unauthorized"
+                        "Invalid IAP JWT assertion."
+                        []
             | Ok validatedPrincipalOption ->
                 let validatedPrincipal =
                     match validatedPrincipalOption with
@@ -293,100 +331,144 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
                     |> Option.ofObj
                     |> Option.defaultValue defaultGroupsDelimiter
 
-                match extractHeader emailHeader context with
-                | None ->
+                let headerEmail = extractHeader emailHeader context |> Option.map parseEmailValue
+
+                let jwtEmail =
+                    validatedPrincipal
+                    |> Option.bind findEmailClaim
+                    |> Option.map (fun value -> value.Trim().ToLowerInvariant())
+
+                let resolvedEmail =
+                    match validatedPrincipal, jwtEmail with
+                    | Some _, Some tokenEmail ->
+                        match headerEmail with
+                        | Some currentHeaderEmail when
+                            not (tokenEmail.Equals(currentHeaderEmail, StringComparison.OrdinalIgnoreCase))
+                            ->
+                            Tracing.addAttribute currentActivity "iap.auth.warning" "jwt_email_header_mismatch"
+
+                            logger.LogWarning(
+                                "IAP JWT email claim mismatch. Header email: {HeaderEmail}, token email: {TokenEmail}",
+                                currentHeaderEmail,
+                                tokenEmail
+                            )
+                        | _ -> ()
+
+                        Some tokenEmail
+                    | Some _, None ->
+                        Tracing.addAttribute currentActivity "iap.auth.error" "missing_jwt_email_claim"
+                        Tracing.setSpanStatus currentActivity false (Some "IAP JWT assertion missing email claim")
+                        logger.LogWarning("Validated IAP JWT assertion did not include an email claim.")
+                        None
+                    | None, _ -> headerEmail
+
+                match validatedPrincipal, resolvedEmail with
+                | Some _, None ->
+                    do!
+                        ProblemResponses.write
+                            context
+                            StatusCodes.Status401Unauthorized
+                            "invalid_iap_jwt_assertion"
+                            "Unauthorized"
+                            "Invalid IAP JWT assertion."
+                            []
+                | None, None ->
                     Tracing.addAttribute currentActivity "iap.auth.error" "missing_email_header"
                     Tracing.addAttribute currentActivity "iap.auth.header" emailHeader
                     Tracing.setSpanStatus currentActivity false (Some "Missing IAP email header")
-                    context.Response.StatusCode <- 401
-                    do! context.Response.WriteAsync $"Unauthorized: Missing or invalid {emailHeader}"
-                | Some rawEmail ->
-                    let userEmail = parseEmailValue rawEmail
 
-                    match validatedPrincipal |> Option.bind findEmailClaim with
-                    | Some tokenEmail when not (userEmail.Equals(tokenEmail, StringComparison.OrdinalIgnoreCase)) ->
-                        Tracing.addAttribute currentActivity "iap.auth.error" "jwt_email_mismatch"
+                    do!
+                        ProblemResponses.write
+                            context
+                            StatusCodes.Status401Unauthorized
+                            "missing_iap_email_header"
+                            "Unauthorized"
+                            $"Missing or invalid {emailHeader} header."
+                            [ "header", emailHeader ]
+                | _, Some userEmail ->
+                    let userName = extractHeader nameHeader context
+                    let profilePicUrl = extractHeader pictureHeader context
+                    let iapGroupKeys = parseGroups (extractHeader groupsHeader context) groupsDelimiter
+
+                    let directoryIdentityService =
+                        context.RequestServices.GetRequiredService<IGoogleDirectoryIdentityService>()
+
+                    let! directoryIdentityData = directoryIdentityService.GetIdentityDataAsync(userEmail)
+                    let directoryGroupKeys = directoryIdentityData.GroupKeys
+
+                    let resolvedProfilePicUrl =
+                        directoryIdentityData.ProfilePicUrl |> Option.orElse profilePicUrl
+
+                    let groupKeys = (iapGroupKeys @ directoryGroupKeys) |> List.distinct
+
+                    let provisioningService =
+                        context.RequestServices.GetRequiredService<IIdentityProvisioningService>()
+
+                    let! result =
+                        provisioningService.EnsureUserAsync {
+                            Email = userEmail
+                            Name = userName
+                            ProfilePicUrl = resolvedProfilePicUrl
+                            GroupKeys = groupKeys
+                            Source = "iap"
+                        }
+
+                    match result with
+                    | Error(InvalidEmailFormat errorMessage) ->
+                        Tracing.addAttribute currentActivity "iap.auth.error" "invalid_email_format"
                         Tracing.addAttribute currentActivity "iap.auth.user_email" userEmail
 
-                        Tracing.setSpanStatus
+                        Tracing.setSpanStatus currentActivity false (Some "Invalid email format in IAP identity")
+
+                        logger.LogWarning("Failed to provision IAP user {Email}: {Error}", userEmail, errorMessage)
+
+                        do!
+                            ProblemResponses.write
+                                context
+                                StatusCodes.Status401Unauthorized
+                                "invalid_iap_email"
+                                "Unauthorized"
+                                "Invalid authenticated user email."
+                                []
+                    | Error error ->
+                        let errorMessage = IdentityProvisioningError.toMessage error
+                        Tracing.addAttribute currentActivity "iap.auth.error" "provisioning_failed"
+                        Tracing.addAttribute currentActivity "iap.auth.user_email" userEmail
+                        Tracing.setSpanStatus currentActivity false (Some "Failed to provision user")
+                        logger.LogWarning("Failed to provision IAP user {Email}: {Error}", userEmail, errorMessage)
+
+                        do!
+                            ProblemResponses.write
+                                context
+                                StatusCodes.Status500InternalServerError
+                                "iap_identity_provisioning_failed"
+                                "Internal Server Error"
+                                "Failed to provision the authenticated user."
+                                []
+                    | Ok userId ->
+                        context.Items.["UserId"] <- userId
+
+                        RequestUserContext.set context {
+                            UserId = Some userId
+                            Name = userName
+                            Email = userEmail
+                            Profile = resolvedProfilePicUrl
+                            GroupKeys = groupKeys
+                            AuthenticationSource = "iap"
+                        }
+
+                        Tracing.addAttribute currentActivity "iap.auth.user_email" userEmail
+                        Tracing.addAttribute currentActivity "iap.auth.groups_count" (string groupKeys.Length)
+
+                        Tracing.addAttribute currentActivity "iap.auth.iap_groups_count" (string iapGroupKeys.Length)
+
+                        Tracing.addAttribute
                             currentActivity
-                            false
-                            (Some "IAP JWT email claim does not match header email")
+                            "iap.auth.directory_groups_count"
+                            (string directoryGroupKeys.Length)
 
-                        logger.LogWarning(
-                            "IAP JWT email claim mismatch. Header email: {HeaderEmail}, token email: {TokenEmail}",
-                            userEmail,
-                            tokenEmail
-                        )
-
-                        context.Response.StatusCode <- 401
-                        do! context.Response.WriteAsync "Unauthorized: IAP identity mismatch"
-                    | _ ->
-                        let userName = extractHeader nameHeader context
-                        let profilePicUrl = extractHeader pictureHeader context
-                        let iapGroupKeys = parseGroups (extractHeader groupsHeader context) groupsDelimiter
-
-                        let directoryIdentityService =
-                            context.RequestServices.GetRequiredService<IGoogleDirectoryIdentityService>()
-
-                        let! directoryIdentityData = directoryIdentityService.GetIdentityDataAsync(userEmail)
-                        let directoryGroupKeys = directoryIdentityData.GroupKeys
-
-                        let resolvedProfilePicUrl =
-                            directoryIdentityData.ProfilePicUrl |> Option.orElse profilePicUrl
-
-                        let groupKeys = (iapGroupKeys @ directoryGroupKeys) |> List.distinct
-
-                        let provisioningService =
-                            context.RequestServices.GetRequiredService<IIdentityProvisioningService>()
-
-                        let! result =
-                            provisioningService.EnsureUserAsync {
-                                Email = userEmail
-                                Name = userName
-                                ProfilePicUrl = resolvedProfilePicUrl
-                                GroupKeys = groupKeys
-                                Source = "iap"
-                            }
-
-                        match result with
-                        | Error(InvalidEmailFormat errorMessage) ->
-                            Tracing.addAttribute currentActivity "iap.auth.error" "invalid_email_format"
-                            Tracing.addAttribute currentActivity "iap.auth.user_email" userEmail
-
-                            Tracing.setSpanStatus currentActivity false (Some "Invalid email format in IAP header")
-
-                            logger.LogWarning("Failed to provision IAP user {Email}: {Error}", userEmail, errorMessage)
-                            context.Response.StatusCode <- 401
-                            do! context.Response.WriteAsync $"Unauthorized: Invalid {emailHeader}"
-                        | Error error ->
-                            let errorMessage = IdentityProvisioningError.toMessage error
-                            Tracing.addAttribute currentActivity "iap.auth.error" "provisioning_failed"
-                            Tracing.addAttribute currentActivity "iap.auth.user_email" userEmail
-                            Tracing.setSpanStatus currentActivity false (Some "Failed to provision user")
-                            logger.LogWarning("Failed to provision IAP user {Email}: {Error}", userEmail, errorMessage)
-                            context.Response.StatusCode <- 500
-
-                            do!
-                                context.Response.WriteAsync
-                                    $"Internal Server Error: Failed to provision user - {errorMessage}"
-                        | Ok userId ->
-                            context.Items.["UserId"] <- userId
-                            Tracing.addAttribute currentActivity "iap.auth.user_email" userEmail
-                            Tracing.addAttribute currentActivity "iap.auth.groups_count" (string groupKeys.Length)
-
-                            Tracing.addAttribute
-                                currentActivity
-                                "iap.auth.iap_groups_count"
-                                (string iapGroupKeys.Length)
-
-                            Tracing.addAttribute
-                                currentActivity
-                                "iap.auth.directory_groups_count"
-                                (string directoryGroupKeys.Length)
-
-                            Tracing.addAttribute currentActivity "user.id" (userId.Value.ToString())
-                            Tracing.addAttribute currentActivity "iap.auth.success" "true"
-                            Tracing.setSpanStatus currentActivity true None
-                            do! next.Invoke context
+                        Tracing.addAttribute currentActivity "user.id" (userId.Value.ToString())
+                        Tracing.addAttribute currentActivity "iap.auth.success" "true"
+                        Tracing.setSpanStatus currentActivity true None
+                        do! next.Invoke context
     }

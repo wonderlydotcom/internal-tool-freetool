@@ -676,7 +676,7 @@ Freetool is designed to run behind **Google Cloud IAP** at the root path (`/`).
 - `OTEL_SERVICE_NAME`: Service name for traces (default: `freetool-api`)
 - `OpenFGA:ApiUrl`: OpenFGA server URL (default: `http://openfga:8090`)
 - `OpenFGA:StoreId`: OpenFGA store ID (empty until store created)
-- `Auth:IAP:JwtAudience`: **Required in production** for IAP JWT assertion validation
+- `Auth:IAP:JwtAudience`: Production IAP JWT audience; if omitted, the app falls back to `IAP_JWT_AUDIENCE`
 - `Auth:IAP:JwtIssuer`: IAP JWT issuer (default: `https://cloud.google.com/iap`)
 - `Auth:IAP:JwtCertsUrl`: Google IAP JWK URL (default: `https://www.gstatic.com/iap/verify/public_key-jwk`)
 
