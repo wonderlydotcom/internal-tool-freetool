@@ -9,7 +9,10 @@ type AuthenticatedControllerBase() =
     inherit ControllerBase()
 
     member this.CurrentUserId: UserId =
-        match RequestUserContext.tryGet this.HttpContext |> Option.bind (fun requestUser -> requestUser.UserId) with
+        match
+            RequestUserContext.tryGet this.HttpContext
+            |> Option.bind (fun requestUser -> requestUser.UserId)
+        with
         | Some userId -> userId
         | None ->
             match this.HttpContext.Items.TryGetValue "UserId" with
@@ -20,7 +23,10 @@ type AuthenticatedControllerBase() =
 
     [<NonAction>]
     member this.TryGetCurrentUserId() : UserId option =
-        match RequestUserContext.tryGet this.HttpContext |> Option.bind (fun requestUser -> requestUser.UserId) with
+        match
+            RequestUserContext.tryGet this.HttpContext
+            |> Option.bind (fun requestUser -> requestUser.UserId)
+        with
         | Some userId -> Some userId
         | None ->
             match this.HttpContext.Items.TryGetValue "UserId" with

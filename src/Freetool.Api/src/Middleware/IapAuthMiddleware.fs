@@ -31,7 +31,9 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
     let defaultJwtAssertionHeader = "X-Goog-Iap-Jwt-Assertion"
     let defaultJwtIssuer = "https://cloud.google.com/iap"
     let defaultJwtCertsUrl = "https://www.gstatic.com/iap/verify/public_key-jwk"
-    let defaultPlatformJwtAudienceSetting = ConfigurationKeys.Auth.IAP.PlatformJwtAudience
+
+    let defaultPlatformJwtAudienceSetting =
+        ConfigurationKeys.Auth.IAP.PlatformJwtAudience
 
     let defaultEmailHeader = "X-Goog-Authenticated-User-Email"
     let defaultNameHeader = "X-Goog-Authenticated-User-Name"
@@ -250,6 +252,7 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
                 Tracing.addAttribute currentActivity "iap.auth.error" "missing_jwt_assertion_header"
                 Tracing.addAttribute currentActivity "iap.auth.jwt_header" headerName
                 Tracing.setSpanStatus currentActivity false (Some "Missing IAP JWT assertion header")
+
                 do!
                     ProblemResponses.write
                         context
@@ -262,6 +265,7 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
                 Tracing.addAttribute currentActivity "iap.auth.error" "jwt_validation_misconfigured"
                 Tracing.setSpanStatus currentActivity false (Some "IAP JWT validation is misconfigured")
                 logger.LogError("IAP JWT validation is misconfigured: {Error}", errorMessage)
+
                 do!
                     ProblemResponses.write
                         context
@@ -274,6 +278,7 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
                 Tracing.addAttribute currentActivity "iap.auth.error" "jwt_key_fetch_failed"
                 Tracing.setSpanStatus currentActivity false (Some "Failed to fetch IAP signing keys")
                 logger.LogError("Failed to fetch IAP signing keys: {Error}", errorMessage)
+
                 do!
                     ProblemResponses.write
                         context
@@ -286,6 +291,7 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
                 Tracing.addAttribute currentActivity "iap.auth.error" "invalid_jwt_assertion"
                 Tracing.setSpanStatus currentActivity false (Some "Invalid IAP JWT assertion")
                 logger.LogWarning("IAP JWT assertion validation failed: {Error}", errorMessage)
+
                 do!
                     ProblemResponses.write
                         context
@@ -330,6 +336,7 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
                     Tracing.addAttribute currentActivity "iap.auth.error" "missing_email_header"
                     Tracing.addAttribute currentActivity "iap.auth.header" emailHeader
                     Tracing.setSpanStatus currentActivity false (Some "Missing IAP email header")
+
                     do!
                         ProblemResponses.write
                             context
@@ -401,6 +408,7 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
                             Tracing.setSpanStatus currentActivity false (Some "Invalid email format in IAP header")
 
                             logger.LogWarning("Failed to provision IAP user {Email}: {Error}", userEmail, errorMessage)
+
                             do!
                                 ProblemResponses.write
                                     context
@@ -415,6 +423,7 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
                             Tracing.addAttribute currentActivity "iap.auth.user_email" userEmail
                             Tracing.setSpanStatus currentActivity false (Some "Failed to provision user")
                             logger.LogWarning("Failed to provision IAP user {Email}: {Error}", userEmail, errorMessage)
+
                             do!
                                 ProblemResponses.write
                                     context
@@ -426,16 +435,14 @@ type IapAuthMiddleware(next: RequestDelegate, logger: ILogger<IapAuthMiddleware>
                         | Ok userId ->
                             context.Items.["UserId"] <- userId
 
-                            RequestUserContext.set
-                                context
-                                {
-                                    UserId = Some userId
-                                    Name = userName
-                                    Email = userEmail
-                                    Profile = resolvedProfilePicUrl
-                                    GroupKeys = groupKeys
-                                    AuthenticationSource = "iap"
-                                }
+                            RequestUserContext.set context {
+                                UserId = Some userId
+                                Name = userName
+                                Email = userEmail
+                                Profile = resolvedProfilePicUrl
+                                GroupKeys = groupKeys
+                                AuthenticationSource = "iap"
+                            }
 
                             Tracing.addAttribute currentActivity "iap.auth.user_email" userEmail
                             Tracing.addAttribute currentActivity "iap.auth.groups_count" (string groupKeys.Length)

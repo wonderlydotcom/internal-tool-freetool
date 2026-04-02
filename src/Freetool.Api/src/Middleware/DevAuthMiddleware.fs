@@ -39,6 +39,7 @@ type DevAuthMiddleware(next: RequestDelegate) =
                 Tracing.addAttribute currentActivity "dev.auth.error" "missing_user_id_header"
                 Tracing.addAttribute currentActivity "dev.auth.header" DEV_USER_ID_HEADER
                 Tracing.setSpanStatus currentActivity false (Some "Missing X-Dev-User-Id header")
+
                 do!
                     ProblemResponses.write
                         context
@@ -53,6 +54,7 @@ type DevAuthMiddleware(next: RequestDelegate) =
                     Tracing.addAttribute currentActivity "dev.auth.error" "invalid_user_id_format"
                     Tracing.addAttribute currentActivity "dev.auth.user_id" userIdStr
                     Tracing.setSpanStatus currentActivity false (Some "Invalid user ID format")
+
                     do!
                         ProblemResponses.write
                             context
@@ -71,6 +73,7 @@ type DevAuthMiddleware(next: RequestDelegate) =
                         Tracing.addAttribute currentActivity "dev.auth.error" "user_not_found"
                         Tracing.addAttribute currentActivity "dev.auth.user_id" userIdStr
                         Tracing.setSpanStatus currentActivity false (Some "User not found")
+
                         do!
                             ProblemResponses.write
                                 context
@@ -82,16 +85,14 @@ type DevAuthMiddleware(next: RequestDelegate) =
                     | Some user ->
                         context.Items.["UserId"] <- user.State.Id
 
-                        RequestUserContext.set
-                            context
-                            {
-                                UserId = Some user.State.Id
-                                Name = Some user.State.Name
-                                Email = user.State.Email
-                                Profile = user.State.ProfilePicUrl
-                                GroupKeys = []
-                                AuthenticationSource = "development"
-                            }
+                        RequestUserContext.set context {
+                            UserId = Some user.State.Id
+                            Name = Some user.State.Name
+                            Email = user.State.Email
+                            Profile = user.State.ProfilePicUrl
+                            GroupKeys = []
+                            AuthenticationSource = "development"
+                        }
 
                         Tracing.addAttribute currentActivity "dev.auth.user_id" userIdStr
                         Tracing.addAttribute currentActivity "user.id" (user.State.Id.Value.ToString())
