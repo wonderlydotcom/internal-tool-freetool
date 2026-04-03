@@ -31,7 +31,8 @@ type DevAuthMiddleware(next: RequestDelegate) =
         // Allow development helpers and OpenAPI docs without authentication.
         if
             not (isNull path)
-            && (path.StartsWith("/dev/") || path.StartsWith("/openapi", System.StringComparison.OrdinalIgnoreCase))
+            && (path.StartsWith("/dev/")
+                || path.StartsWith("/openapi", System.StringComparison.OrdinalIgnoreCase))
         then
             do! next.Invoke context
         else
