@@ -269,4 +269,5 @@ type OpenFgaDefaultMemberPermissionRepairService
         }
 
     interface IOpenFgaDefaultMemberPermissionRepairService with
-        member this.RepairAsync apply requestedSpaceId = this.RepairAsync(apply, requestedSpaceId)
+        member this.RepairAsync apply requestedSpaceId =
+            this.RepairAsync(apply, requestedSpaceId)

@@ -17,13 +17,8 @@ type CapturingLogger() =
         member _.IsEnabled(_logLevel: LogLevel) = true
 
         member _.Log<'State>
-            (
-                logLevel: LogLevel,
-                _eventId: EventId,
-                state: 'State,
-                exn: exn,
-                formatter: Func<'State, exn, string>
-            ) =
+            (logLevel: LogLevel, _eventId: EventId, state: 'State, exn: exn, formatter: Func<'State, exn, string>)
+            =
             let message = formatter.Invoke(state, exn)
 
             match logLevel with
@@ -64,7 +59,8 @@ let ``runOpenFgaDefaultMemberPermissionRepair logs success and warning summary``
 let ``runOpenFgaDefaultMemberPermissionRepair swallows repair exceptions and logs warning`` () =
     let logger = CapturingLogger()
 
-    Program.runOpenFgaDefaultMemberPermissionRepair (logger :> ILogger) (fun () -> raise (InvalidOperationException "boom"))
+    Program.runOpenFgaDefaultMemberPermissionRepair (logger :> ILogger) (fun () ->
+        raise (InvalidOperationException "boom"))
 
     Assert.Contains(
         logger.Warnings,

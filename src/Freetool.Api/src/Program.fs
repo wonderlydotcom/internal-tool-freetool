@@ -234,10 +234,7 @@ let runOpenFgaDefaultMemberPermissionRepair
                 warningCount
             )
     with ex ->
-        logger.LogWarning(
-            "Could not repair OpenFGA default member permissions from audit history: {Error}",
-            ex.Message
-        )
+        logger.LogWarning("Could not repair OpenFGA default member permissions from audit history: {Error}", ex.Message)
 
 [<EntryPoint>]
 let main args =

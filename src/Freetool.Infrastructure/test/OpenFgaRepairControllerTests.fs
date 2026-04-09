@@ -28,11 +28,7 @@ type MockAuthorizationService(checkPermissionFn: AuthSubject -> AuthRelation -> 
         member _.CheckPermissionAsync (subject: AuthSubject) (relation: AuthRelation) (obj: AuthObject) =
             Task.FromResult(checkPermissionFn subject relation obj)
 
-        member _.BatchCheckPermissionsAsync
-            (subject: AuthSubject)
-            (relations: AuthRelation list)
-            (obj: AuthObject)
-            =
+        member _.BatchCheckPermissionsAsync (subject: AuthSubject) (relations: AuthRelation list) (obj: AuthObject) =
             let results =
                 relations
                 |> List.map (fun relation -> (relation, checkPermissionFn subject relation obj))
