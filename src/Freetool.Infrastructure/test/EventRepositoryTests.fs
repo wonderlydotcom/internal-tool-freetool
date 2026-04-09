@@ -285,3 +285,57 @@ let ``GetEventsAsync filters by event type and entity type against SQLite`` () =
     Assert.Equal(matchingEvent.EventType, result.Items.Head.EventType)
     Assert.Equal(matchingEvent.EntityType, result.Items.Head.EntityType)
 }
+
+[<Fact>]
+let ``GetEventsAsync uses the paged database query when event and entity filters are omitted`` () = task {
+    let context, connection = createSqliteContext ()
+    use context = context
+    use connection = connection
+    let repository = EventRepository(context) :> IEventRepository
+
+    let targetUserId = UserId.NewId()
+    let otherUserId = UserId.NewId()
+
+    context.Events.AddRange(
+        [
+            createEvent
+                (EventType.UserEvents UserCreatedEvent)
+                EntityType.User
+                (targetUserId.Value.ToString())
+                targetUserId
+                (DateTime(2026, 1, 4, 9, 0, 0, DateTimeKind.Utc))
+            createEvent
+                (EventType.UserEvents UserUpdatedEvent)
+                EntityType.User
+                (targetUserId.Value.ToString())
+                targetUserId
+                (DateTime(2026, 1, 4, 10, 0, 0, DateTimeKind.Utc))
+            createEvent
+                (EventType.UserEvents UserDeletedEvent)
+                EntityType.User
+                (otherUserId.Value.ToString())
+                otherUserId
+                (DateTime(2026, 1, 4, 11, 0, 0, DateTimeKind.Utc))
+        ]
+    )
+
+    let! _ = context.SaveChangesAsync()
+    context.ChangeTracker.Clear()
+
+    let filter: EventFilter = {
+        UserId = Some targetUserId
+        EventType = None
+        EntityType = None
+        FromDate = None
+        ToDate = None
+        Skip = 0
+        Take = 1
+    }
+
+    let! result = repository.GetEventsAsync(filter)
+
+    Assert.Equal(2, result.TotalCount)
+    Assert.Single(result.Items) |> ignore
+    Assert.Equal(targetUserId, result.Items.Head.UserId)
+    Assert.Equal(EventType.UserEvents UserUpdatedEvent, result.Items.Head.EventType)
+}
