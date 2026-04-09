@@ -387,6 +387,9 @@ let main args =
     builder.Services.AddScoped<IIdentityProvisioningService, IdentityProvisioningService>()
     |> ignore
 
+    builder.Services.AddScoped<OpenFgaDefaultMemberPermissionRepairService>()
+    |> ignore
+
     builder.Services.AddScoped<UserHandler>() |> ignore
 
     builder.Services.AddScoped<SpaceHandler>(fun serviceProvider ->
@@ -527,6 +530,36 @@ let main args =
             with ex ->
                 startupLogger.LogWarning(
                     "Could not set up organization relations for spaces: {Error}. Org admins may not have permissions on existing spaces.",
+                    ex.Message
+                )
+
+            try
+                startupLogger.LogInformation("Repairing OpenFGA default member permissions from audit history...")
+
+                let repairService =
+                    scope.ServiceProvider.GetRequiredService<OpenFgaDefaultMemberPermissionRepairService>()
+
+                let repairTask = repairService.RepairAsync(true, None)
+                repairTask.Wait()
+                let repairSummary = repairTask.Result
+
+                let warningCount =
+                    repairSummary.Results |> List.sumBy (fun result -> List.length result.Warnings)
+
+                startupLogger.LogInformation(
+                    "OpenFGA default member permission repair examined {SpacesExamined} spaces and repaired {SpacesWithDrift} spaces",
+                    repairSummary.SpacesExamined,
+                    repairSummary.SpacesWithDrift
+                )
+
+                if warningCount > 0 then
+                    startupLogger.LogWarning(
+                        "OpenFGA default member permission repair completed with {WarningCount} warnings",
+                        warningCount
+                    )
+            with ex ->
+                startupLogger.LogWarning(
+                    "Could not repair OpenFGA default member permissions from audit history: {Error}",
                     ex.Message
                 )
 

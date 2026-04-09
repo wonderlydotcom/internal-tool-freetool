@@ -35,6 +35,7 @@
     <Compile Include="src/Tracing/AutoTracing.fs" />
     <Compile Include="src/Services/GoogleDirectoryIdentityService.fs" />
     <Compile Include="src/Services/IdentityProvisioningService.fs" />
+    <Compile Include="src/Services/OpenFgaDefaultMemberPermissionRepairService.fs" />
     <Compile Include="src/Middleware/IapAuthMiddleware.fs" />
     <Compile Include="src/Middleware/DevAuthMiddleware.fs" />
     <Compile Include="src/OpenApi/FSharpSchemaFilter.fs" />
@@ -50,6 +51,7 @@
     <Compile Include="src/Controllers/AuditController.fs" />
     <Compile Include="src/Controllers/TrashController.fs" />
     <Compile Include="src/Controllers/OpenFgaInitController.fs" />
+    <Compile Include="src/Controllers/OpenFgaRepairController.fs" />
     <Compile Include="src/Controllers/IdentityProvisioningController.fs" />
     <Compile Include="src/Controllers/DevController.fs" />
     <Compile Include="src/Services/DevSeedingService.fs" />
