@@ -210,6 +210,7 @@ let private ensureOpenFgaStoreWithRetry
 
     attempt 1
 
+[<System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage>]
 [<EntryPoint>]
 let main args =
     let builder = WebApplication.CreateBuilder(args)
@@ -340,16 +341,11 @@ let main args =
     let openFgaApiUrl = builder.Configuration[ConfigurationKeys.OpenFGA.ApiUrl]
     let configuredStoreId = builder.Configuration[ConfigurationKeys.OpenFGA.StoreId]
 
-    let actualStoreId =
-        try
-            ensureOpenFgaStoreWithRetry startupLogger connectionString openFgaApiUrl configuredStoreId
-        with ex ->
-            startupLogger.LogWarning(
-                "Could not ensure OpenFGA store exists: {Error}. Using configured store ID (if any). Authorization may fail.",
-                ex.Message
-            )
+    let resolveOpenFgaStoreId =
+        OpenFgaStoreInitialization.resolveActualStoreIdFromRuntime startupLogger connectionString openFgaApiUrl
 
-            configuredStoreId
+    let actualStoreId =
+        resolveOpenFgaStoreId configuredStoreId (builder.Environment.IsDevelopment())
 
     builder.Services.AddScoped<IAuthorizationService>(fun serviceProvider ->
         // Always create with the actual store ID (which may have been created)
