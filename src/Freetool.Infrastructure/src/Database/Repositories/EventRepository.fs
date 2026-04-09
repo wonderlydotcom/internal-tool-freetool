@@ -42,6 +42,11 @@ type EventRepository(context: FreetoolDbContext) =
             }
         }
 
+    let applyInMemoryEventFilters (items: EventData list) (filter: EventFilter) =
+        items
+        |> List.filter (fun e -> filter.EventType |> Option.forall (fun eventType -> e.EventType = eventType))
+        |> List.filter (fun e -> filter.EntityType |> Option.forall (fun entityType -> e.EntityType = entityType))
+
     interface IEventRepository with
         member this.SaveEventAsync(event: IDomainEvent) = task {
             let eventTypeName = event.GetType().Name
@@ -144,23 +149,30 @@ type EventRepository(context: FreetoolDbContext) =
             let query = context.Events.AsQueryable()
 
             // Apply filters
-            let filteredQuery =
+            let baseFilteredQuery =
                 query
                 |> fun q ->
                     match filter.UserId with
                     | Some userId -> q.Where(fun e -> e.UserId = userId)
                     | None -> q
-                |> fun q ->
-                    match filter.EventType with
-                    | Some eventType -> q.Where(fun e -> e.EventType = eventType)
-                    | None -> q
-                |> fun q ->
-                    match filter.EntityType with
-                    | Some entityType -> q.Where(fun e -> e.EntityType = entityType)
-                    | None -> q
                 |> fun q -> applyDateFilters q filter.FromDate filter.ToDate
 
-            return! toPagedResultAsync filteredQuery filter.Skip filter.Take
+            match filter.EventType, filter.EntityType with
+            | None, None -> return! toPagedResultAsync baseFilteredQuery filter.Skip filter.Take
+            | _ ->
+                // EF Core + SQLite does not reliably translate DU filters that use value-converted columns.
+                let! items =
+                    baseFilteredQuery.OrderByDescending(fun e -> e.OccurredAt).ToListAsync()
+
+                let filteredItems =
+                    applyInMemoryEventFilters (items |> List.ofSeq) filter
+
+                return {
+                    Items = filteredItems |> List.skip filter.Skip |> List.truncate filter.Take
+                    TotalCount = filteredItems.Length
+                    Skip = filter.Skip
+                    Take = filter.Take
+                }
         }
 
         member this.GetEventsByAppIdAsync(filter: AppEventFilter) : Threading.Tasks.Task<PagedResult<EventData>> = task {
