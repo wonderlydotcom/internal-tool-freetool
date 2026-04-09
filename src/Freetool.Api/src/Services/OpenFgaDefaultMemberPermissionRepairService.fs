@@ -33,6 +33,36 @@ type IOpenFgaDefaultMemberPermissionRepairService =
     abstract member RepairAsync:
         apply: bool -> requestedSpaceId: string option -> Task<OpenFgaDefaultMemberPermissionRepairSummary>
 
+module OpenFgaDefaultMemberPermissionRepairStartup =
+    let runOpenFgaDefaultMemberPermissionRepair
+        (logger: ILogger)
+        (repair: unit -> OpenFgaDefaultMemberPermissionRepairSummary)
+        : unit =
+        try
+            logger.LogInformation("Repairing OpenFGA default member permissions from audit history...")
+
+            let repairSummary = repair ()
+
+            let warningCount =
+                repairSummary.Results |> List.sumBy (fun result -> List.length result.Warnings)
+
+            logger.LogInformation(
+                "OpenFGA default member permission repair examined {SpacesExamined} spaces and repaired {SpacesWithDrift} spaces",
+                repairSummary.SpacesExamined,
+                repairSummary.SpacesWithDrift
+            )
+
+            if warningCount > 0 then
+                logger.LogWarning(
+                    "OpenFGA default member permission repair completed with {WarningCount} warnings",
+                    warningCount
+                )
+        with ex ->
+            logger.LogWarning(
+                "Could not repair OpenFGA default member permissions from audit history: {Error}",
+                ex.Message
+            )
+
 module OpenFgaDefaultMemberPermissionRepair =
     let allDefaultMemberPermissions = SpaceHandler.allSpacePermissions
 

@@ -27,16 +27,6 @@ type OpenFgaRepairController
                 (OrganizationObject "default")
     }
 
-    member private this.Forbidden(message: string) : IActionResult =
-        this.StatusCode(
-            403,
-            {|
-                error = "Forbidden"
-                message = message
-            |}
-        )
-        :> IActionResult
-
     [<HttpPost("repair-default-member-permissions")>]
     [<ProducesResponseType(StatusCodes.Status200OK)>]
     [<ProducesResponseType(StatusCodes.Status400BadRequest)>]
@@ -54,7 +44,15 @@ type OpenFgaRepairController
                     actorUserId.Value
                 )
 
-                return this.Forbidden("Only organization administrators can repair OpenFGA default member permissions")
+                return
+                    this.StatusCode(
+                        403,
+                        {|
+                            error = "Forbidden"
+                            message = "Only organization administrators can repair OpenFGA default member permissions"
+                        |}
+                    )
+                    :> IActionResult
             else
                 let requestedSpaceId =
                     spaceId

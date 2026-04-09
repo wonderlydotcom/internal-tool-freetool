@@ -49,17 +49,36 @@ let ``runOpenFgaDefaultMemberPermissionRepair logs success and warning summary``
         ]
     }
 
-    Program.runOpenFgaDefaultMemberPermissionRepair (logger :> ILogger) (fun () -> summary)
+    OpenFgaDefaultMemberPermissionRepairStartup.runOpenFgaDefaultMemberPermissionRepair (logger :> ILogger) (fun () ->
+        summary)
 
     Assert.Contains(logger.Infos, fun message -> message.Contains("Repairing OpenFGA default member permissions"))
     Assert.Contains(logger.Infos, fun message -> message.Contains("examined 2 spaces"))
     Assert.Contains(logger.Warnings, fun message -> message.Contains("completed with 1 warnings"))
 
 [<Fact>]
+let ``runOpenFgaDefaultMemberPermissionRepair logs success without warnings when none are present`` () =
+    let logger = CapturingLogger()
+
+    let summary = {
+        Apply = true
+        SpaceFilter = None
+        SpacesExamined = 1
+        SpacesWithDrift = 0
+        Results = []
+    }
+
+    OpenFgaDefaultMemberPermissionRepairStartup.runOpenFgaDefaultMemberPermissionRepair (logger :> ILogger) (fun () ->
+        summary)
+
+    Assert.Contains(logger.Infos, fun message -> message.Contains("examined 1 spaces"))
+    Assert.Empty(logger.Warnings)
+
+[<Fact>]
 let ``runOpenFgaDefaultMemberPermissionRepair swallows repair exceptions and logs warning`` () =
     let logger = CapturingLogger()
 
-    Program.runOpenFgaDefaultMemberPermissionRepair (logger :> ILogger) (fun () ->
+    OpenFgaDefaultMemberPermissionRepairStartup.runOpenFgaDefaultMemberPermissionRepair (logger :> ILogger) (fun () ->
         raise (InvalidOperationException "boom"))
 
     Assert.Contains(

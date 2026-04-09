@@ -200,6 +200,10 @@ let private createPermissionsChangedEvent
     }
 
 [<Fact>]
+let ``relationToAuditName returns audit permission name`` () =
+    Assert.Equal("RunApp", OpenFgaDefaultMemberPermissionRepair.relationToAuditName AppRun)
+
+[<Fact>]
 let ``RepairAsync adds missing default member tuples from audit history`` () : Task = task {
     let actorUserId = UserId.NewId()
     let space = createSpace "Engineering"
@@ -309,4 +313,155 @@ let ``RepairAsync removes stale default member tuples when later audit events re
 
     Assert.True(canCreateApp)
     Assert.False(canRunApp)
+}
+
+[<Fact>]
+let ``RepairAsync via interface respects space filter and dry run mode`` () : Task = task {
+    let actorUserId = UserId.NewId()
+    let targetSpace = createSpace "Engineering"
+    let otherSpace = createSpace "Support"
+    let targetSpaceId = targetSpace.State.Id.Value.ToString()
+
+    let targetEvent =
+        createPermissionsChangedEvent actorUserId targetSpace [ "RunApp" ] [] (DateTime.UtcNow.AddMinutes(-5.0))
+
+    let otherEvent =
+        createPermissionsChangedEvent actorUserId otherSpace [ "CreateApp" ] [] (DateTime.UtcNow.AddMinutes(-4.0))
+
+    let eventRepository =
+        MockEventRepository([ targetEvent; otherEvent ]) :> IEventRepository
+
+    let spaceRepository =
+        MockSpaceRepository([ targetSpace; otherSpace ]) :> ISpaceRepository
+
+    let authService = TrackingAuthorizationService()
+
+    let service =
+        OpenFgaDefaultMemberPermissionRepairService(
+            eventRepository,
+            spaceRepository,
+            authService :> IAuthorizationService,
+            NullLogger<OpenFgaDefaultMemberPermissionRepairService>.Instance
+        )
+        :> IOpenFgaDefaultMemberPermissionRepairService
+
+    let! summary = service.RepairAsync false (Some targetSpaceId)
+
+    Assert.Equal(Some targetSpaceId, summary.SpaceFilter)
+    Assert.Equal(1, summary.SpacesExamined)
+    Assert.Equal(1, summary.SpacesWithDrift)
+    Assert.Empty(authService.UpdateRequests)
+
+    let result = Assert.Single(summary.Results)
+    let permissionToAdd = Assert.Single(result.PermissionsToAdd)
+    Assert.Equal(targetSpaceId, result.SpaceId)
+    Assert.False(result.Applied)
+    Assert.Equal("RunApp", permissionToAdd)
+}
+
+[<Fact>]
+let ``RepairAsync records warnings for unknown permission names`` () : Task = task {
+    let actorUserId = UserId.NewId()
+    let space = createSpace "Engineering"
+
+    let event =
+        createPermissionsChangedEvent actorUserId space [ "RunApp"; "UnknownGrant" ] [ "UnknownRevoke" ] DateTime.UtcNow
+
+    let eventRepository = MockEventRepository([ event ]) :> IEventRepository
+    let spaceRepository = MockSpaceRepository([ space ]) :> ISpaceRepository
+    let authService = TrackingAuthorizationService()
+
+    let service =
+        OpenFgaDefaultMemberPermissionRepairService(
+            eventRepository,
+            spaceRepository,
+            authService :> IAuthorizationService,
+            NullLogger<OpenFgaDefaultMemberPermissionRepairService>.Instance
+        )
+
+    let! summary = service.RepairAsync(false, None)
+    let result = Assert.Single(summary.Results)
+    let desiredPermission = Assert.Single(result.DesiredPermissions)
+
+    Assert.Equal("RunApp", desiredPermission)
+    Assert.Equal(2, result.Warnings.Length)
+    Assert.Contains(result.Warnings, fun warning -> warning.Contains("UnknownGrant"))
+    Assert.Contains(result.Warnings, fun warning -> warning.Contains("UnknownRevoke"))
+}
+
+[<Fact>]
+let ``RepairAsync records malformed event payload warnings and handles invalid space ids`` () : Task = task {
+    let actorUserId = UserId.NewId()
+    let occurredAt = DateTime.UtcNow
+
+    let malformedEvent = {
+        Id = Guid.NewGuid()
+        EventId = Guid.NewGuid().ToString()
+        EventType = EventType.SpaceEvents Freetool.Domain.Entities.SpaceDefaultMemberPermissionsChangedEvent
+        EntityType = EntityType.Space
+        EntityId = "not-a-guid"
+        EventData = "{not-json"
+        OccurredAt = occurredAt
+        CreatedAt = occurredAt
+        UserId = actorUserId
+    }
+
+    let eventRepository = MockEventRepository([ malformedEvent ]) :> IEventRepository
+    let spaceRepository = MockSpaceRepository([]) :> ISpaceRepository
+    let authService = TrackingAuthorizationService()
+
+    let service =
+        OpenFgaDefaultMemberPermissionRepairService(
+            eventRepository,
+            spaceRepository,
+            authService :> IAuthorizationService,
+            NullLogger<OpenFgaDefaultMemberPermissionRepairService>.Instance
+        )
+
+    let! summary = service.RepairAsync(false, None)
+    let result = Assert.Single(summary.Results)
+    let warning = Assert.Single(result.Warnings)
+
+    Assert.Equal("not-a-guid", result.SpaceId)
+    Assert.Equal("not-a-guid", result.SpaceName)
+    Assert.Contains("Failed to deserialize default member permission event", warning)
+}
+
+[<Fact>]
+let ``RepairAsync paginates through multiple event pages`` () : Task = task {
+    let actorUserId = UserId.NewId()
+    let space = createSpace "Operations"
+    let spaceId = space.State.Id.Value.ToString()
+
+    let events =
+        [ 0..200 ]
+        |> List.map (fun index ->
+            createPermissionsChangedEvent
+                actorUserId
+                space
+                [
+                    if index % 2 = 0 then "RunApp" else "CreateApp"
+                ]
+                []
+                (DateTime.UtcNow.AddMinutes(float -index)))
+
+    let eventRepository = MockEventRepository(events) :> IEventRepository
+    let spaceRepository = MockSpaceRepository([ space ]) :> ISpaceRepository
+    let authService = TrackingAuthorizationService()
+
+    let service =
+        OpenFgaDefaultMemberPermissionRepairService(
+            eventRepository,
+            spaceRepository,
+            authService :> IAuthorizationService,
+            NullLogger<OpenFgaDefaultMemberPermissionRepairService>.Instance
+        )
+
+    let! summary = service.RepairAsync(false, Some spaceId)
+    let result = Assert.Single(summary.Results)
+
+    Assert.Equal(1, summary.SpacesExamined)
+    Assert.Equal(spaceId, result.SpaceId)
+    Assert.Contains("RunApp", result.DesiredPermissions)
+    Assert.Contains("CreateApp", result.DesiredPermissions)
 }
