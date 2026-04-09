@@ -30,7 +30,8 @@ type MockEventRepository(events: EventData list) =
                 |> List.filter (fun event ->
                     filter.EventType |> Option.forall (fun eventType -> event.EventType = eventType))
                 |> List.filter (fun event ->
-                    filter.EntityType |> Option.forall (fun entityType -> event.EntityType = entityType))
+                    filter.EntityType
+                    |> Option.forall (fun entityType -> event.EntityType = entityType))
                 |> List.sortBy (fun event -> event.OccurredAt)
 
             let items = filtered |> List.skip filter.Skip |> List.truncate filter.Take
@@ -83,7 +84,7 @@ type MockSpaceRepository(spaces: ValidatedSpace list) =
             return spaces |> List.tryFind (fun space -> space.State.Name = name)
         }
 
-        member _.GetAllAsync(skip: int) (take: int) : Task<ValidatedSpace list> = task {
+        member _.GetAllAsync (skip: int) (take: int) : Task<ValidatedSpace list> = task {
             return spaces |> List.skip skip |> List.truncate take
         }
 
@@ -98,8 +99,13 @@ type MockSpaceRepository(spaces: ValidatedSpace list) =
         member _.AddAsync(_space: ValidatedSpace) = Task.FromResult(Ok())
         member _.UpdateAsync(_space: ValidatedSpace) = Task.FromResult(Ok())
         member _.DeleteAsync(_space: ValidatedSpace) = Task.FromResult(Ok())
-        member _.ExistsAsync(spaceId: SpaceId) = Task.FromResult(spaces |> List.exists (fun space -> space.State.Id = spaceId))
-        member _.ExistsByNameAsync(name: string) = Task.FromResult(spaces |> List.exists (fun space -> space.State.Name = name))
+
+        member _.ExistsAsync(spaceId: SpaceId) =
+            Task.FromResult(spaces |> List.exists (fun space -> space.State.Id = spaceId))
+
+        member _.ExistsByNameAsync(name: string) =
+            Task.FromResult(spaces |> List.exists (fun space -> space.State.Name = name))
+
         member _.GetCountAsync() = Task.FromResult(spaces.Length)
 
 type TrackingAuthorizationService() =
@@ -200,12 +206,7 @@ let ``RepairAsync adds missing default member tuples from audit history`` () : T
     let spaceId = space.State.Id.Value.ToString()
 
     let event =
-        createPermissionsChangedEvent
-            actorUserId
-            space
-            [ "CreateApp"; "RunApp" ]
-            []
-            (DateTime.UtcNow.AddMinutes(-5.0))
+        createPermissionsChangedEvent actorUserId space [ "CreateApp"; "RunApp" ] [] (DateTime.UtcNow.AddMinutes(-5.0))
 
     let eventRepository = MockEventRepository([ event ]) :> IEventRepository
     let spaceRepository = MockSpaceRepository([ space ]) :> ISpaceRepository
@@ -264,22 +265,14 @@ let ``RepairAsync removes stale default member tuples when later audit events re
     let defaultMemberSubject = UserSetFromRelation("space", spaceId, "member")
 
     let grantedEvent =
-        createPermissionsChangedEvent
-            actorUserId
-            space
-            [ "CreateApp"; "RunApp" ]
-            []
-            (DateTime.UtcNow.AddMinutes(-10.0))
+        createPermissionsChangedEvent actorUserId space [ "CreateApp"; "RunApp" ] [] (DateTime.UtcNow.AddMinutes(-10.0))
 
     let revokedEvent =
-        createPermissionsChangedEvent
-            actorUserId
-            space
-            []
-            [ "RunApp" ]
-            (DateTime.UtcNow.AddMinutes(-1.0))
+        createPermissionsChangedEvent actorUserId space [] [ "RunApp" ] (DateTime.UtcNow.AddMinutes(-1.0))
 
-    let eventRepository = MockEventRepository([ grantedEvent; revokedEvent ]) :> IEventRepository
+    let eventRepository =
+        MockEventRepository([ grantedEvent; revokedEvent ]) :> IEventRepository
+
     let spaceRepository = MockSpaceRepository([ space ]) :> ISpaceRepository
     let authService = TrackingAuthorizationService()
     authService.SeedTuple(defaultMemberSubject, AppCreate, SpaceObject spaceId)

@@ -37,9 +37,11 @@ module OpenFgaDefaultMemberPermissionRepair =
         |> List.map (fun relation -> (SpaceHandler.authRelationToString relation, relation))
         |> Map.ofList
 
-    let relationToAuditName (relation: AuthRelation) = SpaceHandler.authRelationToString relation
+    let relationToAuditName (relation: AuthRelation) =
+        SpaceHandler.authRelationToString relation
 
-    let tryParseAuditName (permissionName: string) = permissionNameToRelation |> Map.tryFind permissionName
+    let tryParseAuditName (permissionName: string) =
+        permissionNameToRelation |> Map.tryFind permissionName
 
     let private serializerOptions =
         let options = JsonSerializerOptions()
@@ -92,11 +94,14 @@ type OpenFgaDefaultMemberPermissionRepairService
             let filteredEvents =
                 allEvents
                 |> List.filter (fun eventData ->
-                    requestedSpaceId |> Option.forall (fun requestedId -> eventData.EntityId = requestedId))
+                    requestedSpaceId
+                    |> Option.forall (fun requestedId -> eventData.EntityId = requestedId))
                 |> List.sortBy (fun eventData -> eventData.OccurredAt)
 
             let groupedEvents =
-                filteredEvents |> List.groupBy (fun eventData -> eventData.EntityId) |> Map.ofList
+                filteredEvents
+                |> List.groupBy (fun eventData -> eventData.EntityId)
+                |> Map.ofList
 
             let! results =
                 groupedEvents
@@ -117,9 +122,7 @@ type OpenFgaDefaultMemberPermissionRepairService
                             let granted =
                                 parsedEvent.PermissionsGranted
                                 |> List.choose (fun permissionName ->
-                                    match
-                                        OpenFgaDefaultMemberPermissionRepair.tryParseAuditName permissionName
-                                    with
+                                    match OpenFgaDefaultMemberPermissionRepair.tryParseAuditName permissionName with
                                     | Some relation -> Some relation
                                     | None ->
                                         warnings <-
@@ -132,9 +135,7 @@ type OpenFgaDefaultMemberPermissionRepairService
                             let revoked =
                                 parsedEvent.PermissionsRevoked
                                 |> List.choose (fun permissionName ->
-                                    match
-                                        OpenFgaDefaultMemberPermissionRepair.tryParseAuditName permissionName
-                                    with
+                                    match OpenFgaDefaultMemberPermissionRepair.tryParseAuditName permissionName with
                                     | Some relation -> Some relation
                                     | None ->
                                         warnings <-
@@ -157,18 +158,17 @@ type OpenFgaDefaultMemberPermissionRepairService
                                 $"Failed to deserialize default member permission event {eventData.EventId}: {ex.Message}"
                                 :: warnings
 
-                    let! persistedSpaceName =
-                        task {
-                            match Guid.TryParse targetSpaceId with
-                            | true, guid ->
-                                let! spaceOption = spaceRepository.GetByIdAsync(SpaceId.FromGuid guid)
+                    let! persistedSpaceName = task {
+                        match Guid.TryParse targetSpaceId with
+                        | true, guid ->
+                            let! spaceOption = spaceRepository.GetByIdAsync(SpaceId.FromGuid guid)
 
-                                return
-                                    match spaceOption with
-                                    | Some space -> Some space.State.Name
-                                    | None -> None
-                            | false, _ -> return None
-                        }
+                            return
+                                match spaceOption with
+                                | Some space -> Some space.State.Name
+                                | None -> None
+                        | false, _ -> return None
+                    }
 
                     let spaceName = persistedSpaceName |> Option.defaultValue effectiveSpaceName
                     let defaultMemberSubject = UserSetFromRelation("space", targetSpaceId, "member")
@@ -185,11 +185,16 @@ type OpenFgaDefaultMemberPermissionRepairService
                         |> List.choose (fun (relation, isAllowed) -> if isAllowed then Some relation else None)
                         |> Set.ofList
 
-                    let permissionsToAdd = Set.difference desiredPermissions currentPermissions |> Set.toList
+                    let permissionsToAdd =
+                        Set.difference desiredPermissions currentPermissions |> Set.toList
 
-                    let permissionsToRemove = Set.difference currentPermissions desiredPermissions |> Set.toList
+                    let permissionsToRemove =
+                        Set.difference currentPermissions desiredPermissions |> Set.toList
 
-                    if apply && (not (List.isEmpty permissionsToAdd) || not (List.isEmpty permissionsToRemove)) then
+                    if
+                        apply
+                        && (not (List.isEmpty permissionsToAdd) || not (List.isEmpty permissionsToRemove))
+                    then
                         do!
                             authService.UpdateRelationshipsAsync {
                                 TuplesToAdd =
@@ -229,10 +234,12 @@ type OpenFgaDefaultMemberPermissionRepairService
                             permissionsToRemove
                             |> List.map OpenFgaDefaultMemberPermissionRepair.relationToAuditName
                             |> List.sort
-                        Applied = apply && (not (List.isEmpty permissionsToAdd) || not (List.isEmpty permissionsToRemove))
+                        Applied =
+                            apply
+                            && (not (List.isEmpty permissionsToAdd) || not (List.isEmpty permissionsToRemove))
                         Warnings = warnings |> List.rev
                     }
-                  })
+                })
                 |> Task.WhenAll
 
             let materializedResults = results |> Array.toList
@@ -240,7 +247,10 @@ type OpenFgaDefaultMemberPermissionRepairService
             let spacesWithDrift =
                 materializedResults
                 |> List.sumBy (fun result ->
-                    if not (List.isEmpty result.PermissionsToAdd) || not (List.isEmpty result.PermissionsToRemove) then
+                    if
+                        not (List.isEmpty result.PermissionsToAdd)
+                        || not (List.isEmpty result.PermissionsToRemove)
+                    then
                         1
                     else
                         0)
