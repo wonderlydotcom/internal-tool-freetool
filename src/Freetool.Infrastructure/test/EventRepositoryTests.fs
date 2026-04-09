@@ -2,6 +2,7 @@ module Freetool.Infrastructure.Tests.EventRepositoryTests
 
 open System
 open Xunit
+open Microsoft.Data.Sqlite
 open Microsoft.EntityFrameworkCore
 open Microsoft.Extensions.DependencyInjection
 open Freetool.Application.DTOs
@@ -20,6 +21,17 @@ let private createContext () =
 
     let provider = services.BuildServiceProvider()
     provider.GetRequiredService<FreetoolDbContext>()
+
+let private createSqliteContext () =
+    let connection = new SqliteConnection("Data Source=:memory:")
+    connection.Open()
+
+    let options =
+        DbContextOptionsBuilder<FreetoolDbContext>().UseSqlite(connection).Options
+
+    let context = new FreetoolDbContext(options)
+    context.Database.EnsureCreated() |> ignore
+    context, connection
 
 let private createEvent
     (eventType: EventType)
@@ -116,7 +128,10 @@ let ``GetEventsByAppIdAsync includes app and run events when includeRunEvents is
     let runIdForOtherApp = RunId.NewId()
 
     context.Runs.Add(createRun runIdForApp appId (DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc)))
+    |> ignore
+
     context.Runs.Add(createRun runIdForOtherApp otherAppId (DateTime(2026, 1, 2, 0, 0, 1, DateTimeKind.Utc)))
+    |> ignore
 
     let events = [
         createEvent
@@ -177,6 +192,7 @@ let ``GetEventsByAppIdAsync excludes run events when includeRunEvents is false``
     let runIdForApp = RunId.NewId()
 
     context.Runs.Add(createRun runIdForApp appId (DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc)))
+    |> ignore
 
     let events = [
         createEvent
@@ -210,4 +226,116 @@ let ``GetEventsByAppIdAsync excludes run events when includeRunEvents is false``
 
     Assert.Single(result.Items) |> ignore
     Assert.Equal(EntityType.App, result.Items.Head.EntityType)
+}
+
+[<Fact>]
+let ``GetEventsAsync filters by event type and entity type against SQLite`` () = task {
+    let context, connection = createSqliteContext ()
+    use context = context
+    use connection = connection
+    let repository = EventRepository(context) :> IEventRepository
+
+    let userId = UserId.NewId()
+    let targetSpaceId = SpaceId.NewId()
+    let otherSpaceId = SpaceId.NewId()
+
+    let matchingEvent =
+        createEvent
+            (EventType.SpaceEvents SpaceDefaultMemberPermissionsChangedEvent)
+            EntityType.Space
+            (targetSpaceId.Value.ToString())
+            userId
+            (DateTime(2026, 1, 3, 9, 0, 0, DateTimeKind.Utc))
+
+    let wrongEventType =
+        createEvent
+            (EventType.SpaceEvents SpacePermissionsChangedEvent)
+            EntityType.Space
+            (targetSpaceId.Value.ToString())
+            userId
+            (DateTime(2026, 1, 3, 10, 0, 0, DateTimeKind.Utc))
+
+    let wrongEntityType =
+        createEvent
+            (EventType.SpaceEvents SpaceDefaultMemberPermissionsChangedEvent)
+            EntityType.App
+            (otherSpaceId.Value.ToString())
+            userId
+            (DateTime(2026, 1, 3, 11, 0, 0, DateTimeKind.Utc))
+
+    context.Events.AddRange([ matchingEvent; wrongEventType; wrongEntityType ])
+    let! _ = context.SaveChangesAsync()
+    context.ChangeTracker.Clear()
+
+    let filter: EventFilter = {
+        UserId = None
+        EventType = Some(EventType.SpaceEvents SpaceDefaultMemberPermissionsChangedEvent)
+        EntityType = Some EntityType.Space
+        FromDate = None
+        ToDate = None
+        Skip = 0
+        Take = 50
+    }
+
+    let! result = repository.GetEventsAsync(filter)
+
+    Assert.Single(result.Items) |> ignore
+    Assert.Equal(1, result.TotalCount)
+    Assert.Equal(matchingEvent.EventId, result.Items.Head.EventId)
+    Assert.Equal(matchingEvent.EventType, result.Items.Head.EventType)
+    Assert.Equal(matchingEvent.EntityType, result.Items.Head.EntityType)
+}
+
+[<Fact>]
+let ``GetEventsAsync uses the paged database query when event and entity filters are omitted`` () = task {
+    let context, connection = createSqliteContext ()
+    use context = context
+    use connection = connection
+    let repository = EventRepository(context) :> IEventRepository
+
+    let targetUserId = UserId.NewId()
+    let otherUserId = UserId.NewId()
+
+    context.Events.AddRange(
+        [
+            createEvent
+                (EventType.UserEvents UserCreatedEvent)
+                EntityType.User
+                (targetUserId.Value.ToString())
+                targetUserId
+                (DateTime(2026, 1, 4, 9, 0, 0, DateTimeKind.Utc))
+            createEvent
+                (EventType.UserEvents UserUpdatedEvent)
+                EntityType.User
+                (targetUserId.Value.ToString())
+                targetUserId
+                (DateTime(2026, 1, 4, 10, 0, 0, DateTimeKind.Utc))
+            createEvent
+                (EventType.UserEvents UserDeletedEvent)
+                EntityType.User
+                (otherUserId.Value.ToString())
+                otherUserId
+                (DateTime(2026, 1, 4, 11, 0, 0, DateTimeKind.Utc))
+        ]
+    )
+
+    let! _ = context.SaveChangesAsync()
+    context.ChangeTracker.Clear()
+
+    let filter: EventFilter = {
+        UserId = Some targetUserId
+        EventType = None
+        EntityType = None
+        FromDate = None
+        ToDate = None
+        Skip = 0
+        Take = 1
+    }
+
+    let! result = repository.GetEventsAsync(filter)
+
+    Assert.Equal(2, result.TotalCount)
+    Assert.Single(result.Items) |> ignore
+    Assert.Equal(targetUserId, result.Items.Head.UserId)
+    Assert.Equal(EventType.UserEvents UserUpdatedEvent, result.Items.Head.EventType)
 }
