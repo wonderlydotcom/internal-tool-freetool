@@ -387,6 +387,9 @@ let main args =
     builder.Services.AddScoped<IIdentityProvisioningService, IdentityProvisioningService>()
     |> ignore
 
+    builder.Services.AddScoped<IOpenFgaDefaultMemberPermissionRepairService, OpenFgaDefaultMemberPermissionRepairService>()
+    |> ignore
+
     builder.Services.AddScoped<UserHandler>() |> ignore
 
     builder.Services.AddScoped<SpaceHandler>(fun serviceProvider ->
@@ -529,6 +532,12 @@ let main args =
                     "Could not set up organization relations for spaces: {Error}. Org admins may not have permissions on existing spaces.",
                     ex.Message
                 )
+
+            OpenFgaDefaultMemberPermissionRepairStartup.runOpenFgaDefaultMemberPermissionRepair startupLogger (fun () ->
+                let repairService =
+                    scope.ServiceProvider.GetRequiredService<IOpenFgaDefaultMemberPermissionRepairService>()
+
+                repairService.RepairAsync true None |> Async.AwaitTask |> Async.RunSynchronously)
 
             // Note: Organization admin is now set automatically when the user first logs in
             // via IapAuthMiddleware if their email matches OpenFGA:OrgAdminEmail config

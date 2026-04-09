@@ -8,6 +8,9 @@
   <ItemGroup>
     <Compile Include="DbContextConfigurationTests.fs" />
     <Compile Include="OpenFgaServiceTests.fs" />
+    <Compile Include="OpenFgaDefaultMemberPermissionRepairServiceTests.fs" />
+    <Compile Include="OpenFgaRepairControllerTests.fs" />
+    <Compile Include="ProgramStartupRepairTests.fs" />
     <Compile Include="SpaceAuthorizationTests.fs" />
     <Compile Include="ControllerConventionsTests.fs" />
     <Compile Include="SpaceControllerTests.fs" />
