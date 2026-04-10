@@ -2,7 +2,10 @@ module Freetool.Infrastructure.Tests.OpenFgaServiceTests
 
 open System
 open System.Threading.Tasks
+open System.Reflection
+open Microsoft.Extensions.Logging
 open Microsoft.Extensions.Logging.Abstractions
+open OpenFga.Sdk.Model
 open Xunit
 open Freetool.Application.Interfaces
 open Freetool.Infrastructure.Services
@@ -20,6 +23,23 @@ let createServiceWithStore storeId =
 
 let createConcreteServiceWithStore storeId =
     OpenFgaService(openFgaApiUrl, NullLogger<OpenFgaService>.Instance, storeId)
+
+type CapturingOpenFgaLogger() =
+    let mutable warnings: string list = []
+
+    member _.Warnings = warnings
+
+    interface ILogger<OpenFgaService> with
+        member _.BeginScope<'State>(_state: 'State) = null
+        member _.IsEnabled(_logLevel: LogLevel) = true
+
+        member _.Log<'State>
+            (logLevel: LogLevel, _eventId: EventId, state: 'State, exn: exn, formatter: Func<'State, exn, string>)
+            =
+            let message = formatter.Invoke(state, exn)
+
+            if logLevel = LogLevel.Warning then
+                warnings <- message :: warnings
 
 [<Fact>]
 let ``CreateStoreAsync creates a new store successfully`` () : Task = task {
@@ -278,6 +298,52 @@ let ``ReadRelationshipsAsync returns typed tuples for a space object`` () : Task
     Assert.Contains(engineeringTuples[2], relationships)
     Assert.DoesNotContain(supportTuple, relationships)
 }
+
+[<Fact>]
+let ``ReadRelationshipsAsync logs and skips unparseable tuples`` () =
+    let logger = CapturingOpenFgaLogger()
+    let service = OpenFgaService(openFgaApiUrl, logger)
+
+    let generatedType =
+        typeof<OpenFgaService>.Assembly.GetTypes()
+        |> Array.find (fun t -> t.FullName.Contains("mappedTuples@405"))
+
+    let ctor =
+        generatedType.GetConstructors(BindingFlags.Instance ||| BindingFlags.NonPublic ||| BindingFlags.Public)
+        |> Array.exactlyOne
+
+    let ctorArgs =
+        ctor.GetParameters()
+        |> Array.map (fun parameter ->
+            if parameter.ParameterType = typeof<OpenFgaService> then
+                box service
+            elif parameter.ParameterType = typeof<string> then
+                box "space:engineering"
+            elif parameter.ParameterType.IsAssignableFrom(logger.GetType()) then
+                box logger
+            else
+                failwithf
+                    "Unexpected constructor parameter for %s: %s"
+                    generatedType.FullName
+                    parameter.ParameterType.FullName)
+
+    let instance = ctor.Invoke(ctorArgs)
+
+    let invokeMethod =
+        generatedType.GetMethod("Invoke", BindingFlags.Instance ||| BindingFlags.Public ||| BindingFlags.NonPublic)
+
+    let invalidTuple =
+        OpenFga.Sdk.Model.Tuple(
+            Key = TupleKey(User = "not-a-valid-subject", Relation = "run_app", Object = "space:engineering"),
+            Timestamp = DateTime.UtcNow
+        )
+
+    let result = invokeMethod.Invoke(instance, [| box invalidTuple |])
+
+    Assert.Null(result)
+
+    Assert.Contains(logger.Warnings, fun warning -> warning.Contains("Ignoring unparseable OpenFGA tuple"))
+    Assert.Contains(logger.Warnings, fun warning -> warning.Contains("space:engineering"))
 
 [<Fact>]
 let ``CheckPermissionAsync returns true for granted permission`` () : Task = task {
