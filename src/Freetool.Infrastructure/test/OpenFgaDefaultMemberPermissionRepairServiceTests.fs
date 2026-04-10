@@ -84,7 +84,7 @@ type MockSpaceRepository(spaces: ValidatedSpace list) =
             return spaces |> List.tryFind (fun space -> space.State.Name = name)
         }
 
-        member _.GetAllAsync(skip: int) (take: int) : Task<ValidatedSpace list> = task {
+        member _.GetAllAsync (skip: int) (take: int) : Task<ValidatedSpace list> = task {
             return spaces |> List.skip skip |> List.truncate take
         }
 
@@ -121,10 +121,19 @@ type TrackingAuthorizationService() =
 
     interface IAuthorizationService with
         member _.CreateStoreAsync request =
-            Task.FromResult({ Id = Guid.NewGuid().ToString(); Name = request.Name })
+            Task.FromResult(
+                {
+                    Id = Guid.NewGuid().ToString()
+                    Name = request.Name
+                }
+            )
 
         member _.WriteAuthorizationModelAsync() =
-            Task.FromResult({ AuthorizationModelId = Guid.NewGuid().ToString() })
+            Task.FromResult(
+                {
+                    AuthorizationModelId = Guid.NewGuid().ToString()
+                }
+            )
 
         member _.InitializeOrganizationAsync _ _ = Task.FromResult(())
 
@@ -148,7 +157,7 @@ type TrackingAuthorizationService() =
                 tuples <- tuples |> Map.remove (key tuple)
         }
 
-        member _.CheckPermissionAsync(subject: AuthSubject) (relation: AuthRelation) (obj: AuthObject) =
+        member _.CheckPermissionAsync (subject: AuthSubject) (relation: AuthRelation) (obj: AuthObject) =
             Task.FromResult(
                 tuples
                 |> Map.containsKey (
@@ -316,10 +325,7 @@ let ``RepairAsync rebuilds persisted space tuples plus audit derived permissions
         fun tuple -> tuple.Subject = defaultMemberSubject && tuple.Relation = AppCreate
     )
 
-    Assert.Contains(
-        request.TuplesToAdd,
-        fun tuple -> tuple.Subject = defaultMemberSubject && tuple.Relation = AppRun
-    )
+    Assert.Contains(request.TuplesToAdd, fun tuple -> tuple.Subject = defaultMemberSubject && tuple.Relation = AppRun)
 
     Assert.Contains(
         request.TuplesToAdd,
@@ -331,120 +337,119 @@ let ``RepairAsync rebuilds persisted space tuples plus audit derived permissions
 }
 
 [<Fact>]
-let ``RepairAsync removes stale tuples that are no longer present in persisted state or audit history`` () : Task =
-    task {
-        let actorUserId = UserId.NewId()
-        let memberUserId = UserId.NewId()
-        let removedUserId = UserId.NewId()
-        let oldModeratorUserId = UserId.NewId()
-        let space = createSpace "Support" [ memberUserId ]
-        let spaceId = space.State.Id.Value.ToString()
+let ``RepairAsync removes stale tuples that are no longer present in persisted state or audit history`` () : Task = task {
+    let actorUserId = UserId.NewId()
+    let memberUserId = UserId.NewId()
+    let removedUserId = UserId.NewId()
+    let oldModeratorUserId = UserId.NewId()
+    let space = createSpace "Support" [ memberUserId ]
+    let spaceId = space.State.Id.Value.ToString()
 
-        let events = [
-            createDefaultPermissionEvent actorUserId space [ "CreateDashboard" ] [] (DateTime.UtcNow.AddMinutes(-5.0))
-            createUserPermissionEvent actorUserId space memberUserId [ "EditApp" ] [] (DateTime.UtcNow.AddMinutes(-4.0))
-        ]
+    let events = [
+        createDefaultPermissionEvent actorUserId space [ "CreateDashboard" ] [] (DateTime.UtcNow.AddMinutes(-5.0))
+        createUserPermissionEvent actorUserId space memberUserId [ "EditApp" ] [] (DateTime.UtcNow.AddMinutes(-4.0))
+    ]
 
-        let eventRepository = MockEventRepository(events) :> IEventRepository
-        let spaceRepository = MockSpaceRepository([ space ]) :> ISpaceRepository
-        let authService = TrackingAuthorizationService()
+    let eventRepository = MockEventRepository(events) :> IEventRepository
+    let spaceRepository = MockSpaceRepository([ space ]) :> ISpaceRepository
+    let authService = TrackingAuthorizationService()
 
-        authService.SeedTuple(
-            {
-                Subject = Freetool.Application.Interfaces.User(oldModeratorUserId.Value.ToString())
-                Relation = SpaceModerator
-                Object = SpaceObject spaceId
-            }
+    authService.SeedTuple(
+        {
+            Subject = Freetool.Application.Interfaces.User(oldModeratorUserId.Value.ToString())
+            Relation = SpaceModerator
+            Object = SpaceObject spaceId
+        }
+    )
+
+    authService.SeedTuple(
+        {
+            Subject = Freetool.Application.Interfaces.User(removedUserId.Value.ToString())
+            Relation = SpaceMember
+            Object = SpaceObject spaceId
+        }
+    )
+
+    authService.SeedTuple(
+        {
+            Subject = Freetool.Application.Interfaces.User(removedUserId.Value.ToString())
+            Relation = AppDelete
+            Object = SpaceObject spaceId
+        }
+    )
+
+    authService.SeedTuple(
+        {
+            Subject = UserSetFromRelation("space", spaceId, "member")
+            Relation = AppCreate
+            Object = SpaceObject spaceId
+        }
+    )
+
+    authService.SeedTuple(
+        {
+            Subject = Freetool.Application.Interfaces.User(memberUserId.Value.ToString())
+            Relation = AppRun
+            Object = SpaceObject spaceId
+        }
+    )
+
+    let service =
+        OpenFgaSpaceAuthorizationRepairService(
+            eventRepository,
+            spaceRepository,
+            authService :> IAuthorizationService,
+            authService :> IAuthorizationRelationshipReader,
+            NullLogger<OpenFgaSpaceAuthorizationRepairService>.Instance
         )
 
-        authService.SeedTuple(
-            {
-                Subject = Freetool.Application.Interfaces.User(removedUserId.Value.ToString())
-                Relation = SpaceMember
-                Object = SpaceObject spaceId
-            }
-        )
+    let! summary = service.RepairAsync(true, None)
 
-        authService.SeedTuple(
-            {
-                Subject = Freetool.Application.Interfaces.User(removedUserId.Value.ToString())
-                Relation = AppDelete
-                Object = SpaceObject spaceId
-            }
-        )
+    Assert.Equal(1, summary.SpacesExamined)
+    Assert.Equal(1, summary.SpacesWithDrift)
 
-        authService.SeedTuple(
-            {
-                Subject = UserSetFromRelation("space", spaceId, "member")
-                Relation = AppCreate
-                Object = SpaceObject spaceId
-            }
-        )
+    let request = Assert.Single(authService.UpdateRequests)
 
-        authService.SeedTuple(
-            {
-                Subject = Freetool.Application.Interfaces.User(memberUserId.Value.ToString())
-                Relation = AppRun
-                Object = SpaceObject spaceId
-            }
-        )
+    Assert.Contains(
+        request.TuplesToRemove,
+        fun tuple ->
+            tuple.Subject = Freetool.Application.Interfaces.User(oldModeratorUserId.Value.ToString())
+            && tuple.Relation = SpaceModerator
+            && tuple.Object = SpaceObject spaceId
+    )
 
-        let service =
-            OpenFgaSpaceAuthorizationRepairService(
-                eventRepository,
-                spaceRepository,
-                authService :> IAuthorizationService,
-                authService :> IAuthorizationRelationshipReader,
-                NullLogger<OpenFgaSpaceAuthorizationRepairService>.Instance
-            )
+    Assert.Contains(
+        request.TuplesToRemove,
+        fun tuple ->
+            tuple.Subject = Freetool.Application.Interfaces.User(removedUserId.Value.ToString())
+            && tuple.Relation = SpaceMember
+            && tuple.Object = SpaceObject spaceId
+    )
 
-        let! summary = service.RepairAsync(true, None)
+    Assert.Contains(
+        request.TuplesToRemove,
+        fun tuple ->
+            tuple.Subject = Freetool.Application.Interfaces.User(removedUserId.Value.ToString())
+            && tuple.Relation = AppDelete
+            && tuple.Object = SpaceObject spaceId
+    )
 
-        Assert.Equal(1, summary.SpacesExamined)
-        Assert.Equal(1, summary.SpacesWithDrift)
+    Assert.Contains(
+        request.TuplesToRemove,
+        fun tuple ->
+            tuple.Subject = UserSetFromRelation("space", spaceId, "member")
+            && tuple.Relation = AppCreate
+            && tuple.Object = SpaceObject spaceId
+    )
 
-        let request = Assert.Single(authService.UpdateRequests)
-
-        Assert.Contains(
-            request.TuplesToRemove,
-            fun tuple ->
-                tuple.Subject = Freetool.Application.Interfaces.User(oldModeratorUserId.Value.ToString())
-                && tuple.Relation = SpaceModerator
-                && tuple.Object = SpaceObject spaceId
-        )
-
-        Assert.Contains(
-            request.TuplesToRemove,
-            fun tuple ->
-                tuple.Subject = Freetool.Application.Interfaces.User(removedUserId.Value.ToString())
-                && tuple.Relation = SpaceMember
-                && tuple.Object = SpaceObject spaceId
-        )
-
-        Assert.Contains(
-            request.TuplesToRemove,
-            fun tuple ->
-                tuple.Subject = Freetool.Application.Interfaces.User(removedUserId.Value.ToString())
-                && tuple.Relation = AppDelete
-                && tuple.Object = SpaceObject spaceId
-        )
-
-        Assert.Contains(
-            request.TuplesToRemove,
-            fun tuple ->
-                tuple.Subject = UserSetFromRelation("space", spaceId, "member")
-                && tuple.Relation = AppCreate
-                && tuple.Object = SpaceObject spaceId
-        )
-
-        Assert.Contains(
-            request.TuplesToRemove,
-            fun tuple ->
-                tuple.Subject = Freetool.Application.Interfaces.User(memberUserId.Value.ToString())
-                && tuple.Relation = AppRun
-                && tuple.Object = SpaceObject spaceId
-        )
-    }
+    Assert.Contains(
+        request.TuplesToRemove,
+        fun tuple ->
+            tuple.Subject = Freetool.Application.Interfaces.User(memberUserId.Value.ToString())
+            && tuple.Relation = AppRun
+            && tuple.Object = SpaceObject spaceId
+    )
+}
 
 [<Fact>]
 let ``RepairAsync via interface respects space filter and dry run mode`` () : Task = task {
@@ -459,7 +464,10 @@ let ``RepairAsync via interface respects space filter and dry run mode`` () : Ta
     ]
 
     let eventRepository = MockEventRepository(events) :> IEventRepository
-    let spaceRepository = MockSpaceRepository([ targetSpace; otherSpace ]) :> ISpaceRepository
+
+    let spaceRepository =
+        MockSpaceRepository([ targetSpace; otherSpace ]) :> ISpaceRepository
+
     let authService = TrackingAuthorizationService()
 
     let service =
@@ -483,7 +491,11 @@ let ``RepairAsync via interface respects space filter and dry run mode`` () : Ta
     Assert.Equal(targetSpaceId, result.SpaceId)
     Assert.False(result.Applied)
     Assert.Contains(result.RelationshipsToAdd, fun relationship -> relationship.Contains("run_app"))
-    Assert.DoesNotContain(result.RelationshipsToAdd, fun relationship -> relationship.Contains(otherSpace.State.Id.Value.ToString()))
+
+    Assert.DoesNotContain(
+        result.RelationshipsToAdd,
+        fun relationship -> relationship.Contains(otherSpace.State.Id.Value.ToString())
+    )
 }
 
 [<Fact>]
@@ -508,7 +520,9 @@ let ``RepairAsync records warnings for unknown permission names and malformed ev
         UserId = actorUserId
     }
 
-    let eventRepository = MockEventRepository([ defaultEvent; malformedUserEvent ]) :> IEventRepository
+    let eventRepository =
+        MockEventRepository([ defaultEvent; malformedUserEvent ]) :> IEventRepository
+
     let spaceRepository = MockSpaceRepository([ space ]) :> ISpaceRepository
     let authService = TrackingAuthorizationService()
 

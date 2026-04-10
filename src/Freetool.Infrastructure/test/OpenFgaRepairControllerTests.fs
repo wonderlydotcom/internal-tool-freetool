@@ -138,8 +138,7 @@ let ``RepairDefaultMemberPermissions returns 200 and forwards arguments for org 
 
     match result with
     | :? OkObjectResult as okResult ->
-        let payload =
-            Assert.IsType<OpenFgaSpaceAuthorizationRepairSummary>(okResult.Value)
+        let payload = Assert.IsType<OpenFgaSpaceAuthorizationRepairSummary>(okResult.Value)
 
         Assert.Equal(expectedSummary.SpacesExamined, payload.SpacesExamined)
         Assert.Equal(expectedSummary.SpaceFilter, payload.SpaceFilter)

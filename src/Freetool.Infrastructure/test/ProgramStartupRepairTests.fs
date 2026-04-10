@@ -49,8 +49,7 @@ let ``runOpenFgaSpaceAuthorizationRepair logs success and warning summary`` () =
         ]
     }
 
-    OpenFgaSpaceAuthorizationRepairStartup.runOpenFgaSpaceAuthorizationRepair (logger :> ILogger) (fun () ->
-        summary)
+    OpenFgaSpaceAuthorizationRepairStartup.runOpenFgaSpaceAuthorizationRepair (logger :> ILogger) (fun () -> summary)
 
     Assert.Contains(logger.Infos, fun message -> message.Contains("Repairing OpenFGA space authorization"))
     Assert.Contains(logger.Infos, fun message -> message.Contains("examined 2 spaces"))
@@ -68,8 +67,7 @@ let ``runOpenFgaSpaceAuthorizationRepair logs success without warnings when none
         Results = []
     }
 
-    OpenFgaSpaceAuthorizationRepairStartup.runOpenFgaSpaceAuthorizationRepair (logger :> ILogger) (fun () ->
-        summary)
+    OpenFgaSpaceAuthorizationRepairStartup.runOpenFgaSpaceAuthorizationRepair (logger :> ILogger) (fun () -> summary)
 
     Assert.Contains(logger.Infos, fun message -> message.Contains("examined 1 spaces"))
     Assert.Empty(logger.Warnings)

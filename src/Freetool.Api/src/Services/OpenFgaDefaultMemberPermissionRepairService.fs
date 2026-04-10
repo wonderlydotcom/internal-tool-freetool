@@ -90,8 +90,7 @@ module OpenFgaSpaceAuthorizationRepair =
     let deserializeUserPermissionEvent (rawEventData: string) =
         JsonSerializer.Deserialize<SpacePermissionsChangedEvent>(rawEventData, serializerOptions)
 
-    let relationshipToDisplay (tuple: RelationshipTuple) =
-        RelationshipTuple.toDisplayString tuple
+    let relationshipToDisplay (tuple: RelationshipTuple) = RelationshipTuple.toDisplayString tuple
 
 type OpenFgaSpaceAuthorizationRepairService
     (
@@ -115,7 +114,9 @@ type OpenFgaSpaceAuthorizationRepairService
 
         loop 0 []
 
-    member private _.LoadAllSpaceEventsAsync(spaceEventType: Freetool.Domain.Entities.SpaceEvents) : Task<EventData list> =
+    member private _.LoadAllSpaceEventsAsync
+        (spaceEventType: Freetool.Domain.Entities.SpaceEvents)
+        : Task<EventData list> =
         let rec loop skip acc = task {
             let! page =
                 eventRepository.GetEventsAsync {
@@ -151,7 +152,8 @@ type OpenFgaSpaceAuthorizationRepairService
                 | Some relation -> Some relation
                 | None ->
                     warnings <-
-                        $"Ignored unknown {kind} permission '{permissionName}' in event {eventId}" :: warnings
+                        $"Ignored unknown {kind} permission '{permissionName}' in event {eventId}"
+                        :: warnings
 
                     None)
             |> Set.ofList
@@ -161,8 +163,11 @@ type OpenFgaSpaceAuthorizationRepairService
                 let parsedEvent =
                     OpenFgaSpaceAuthorizationRepair.deserializeDefaultMemberPermissionEvent eventData.EventData
 
-                let granted = parsePermissions "granted default-member" parsedEvent.PermissionsGranted eventData.EventId
-                let revoked = parsePermissions "revoked default-member" parsedEvent.PermissionsRevoked eventData.EventId
+                let granted =
+                    parsePermissions "granted default-member" parsedEvent.PermissionsGranted eventData.EventId
+
+                let revoked =
+                    parsePermissions "revoked default-member" parsedEvent.PermissionsRevoked eventData.EventId
 
                 desiredPermissions <- Set.union granted (Set.difference desiredPermissions revoked)
             with ex ->
@@ -195,7 +200,10 @@ type OpenFgaSpaceAuthorizationRepairService
                 match OpenFgaSpaceAuthorizationRepair.tryParseAuditName permissionName with
                 | Some relation -> Some relation
                 | None ->
-                    warnings <- $"Ignored unknown {kind} permission '{permissionName}' in event {eventId}" :: warnings
+                    warnings <-
+                        $"Ignored unknown {kind} permission '{permissionName}' in event {eventId}"
+                        :: warnings
+
                     None)
             |> Set.ofList
 
@@ -206,13 +214,19 @@ type OpenFgaSpaceAuthorizationRepairService
 
                 let targetUserId = parsedEvent.TargetUserId.Value.ToString()
 
-                let granted = parsePermissions "granted member" parsedEvent.PermissionsGranted eventData.EventId
-                let revoked = parsePermissions "revoked member" parsedEvent.PermissionsRevoked eventData.EventId
+                let granted =
+                    parsePermissions "granted member" parsedEvent.PermissionsGranted eventData.EventId
+
+                let revoked =
+                    parsePermissions "revoked member" parsedEvent.PermissionsRevoked eventData.EventId
 
                 let currentPermissions =
-                    desiredPermissionsByUser |> Map.tryFind targetUserId |> Option.defaultValue Set.empty
+                    desiredPermissionsByUser
+                    |> Map.tryFind targetUserId
+                    |> Option.defaultValue Set.empty
 
-                let updatedPermissions = Set.union granted (Set.difference currentPermissions revoked)
+                let updatedPermissions =
+                    Set.union granted (Set.difference currentPermissions revoked)
 
                 desiredPermissionsByUser <-
                     if Set.isEmpty updatedPermissions then
@@ -228,7 +242,8 @@ type OpenFgaSpaceAuthorizationRepairService
                 )
 
                 warnings <-
-                    $"Failed to deserialize member permission event {eventData.EventId}: {ex.Message}" :: warnings
+                    $"Failed to deserialize member permission event {eventData.EventId}: {ex.Message}"
+                    :: warnings
 
         let filteredPermissionsByUser =
             desiredPermissionsByUser
@@ -236,7 +251,8 @@ type OpenFgaSpaceAuthorizationRepairService
 
         (filteredPermissionsByUser, warnings |> List.rev)
 
-    member private this.BuildDesiredRelationships(space: ValidatedSpace, defaultMemberEvents: EventData list, userEvents: EventData list)
+    member private this.BuildDesiredRelationships
+        (space: ValidatedSpace, defaultMemberEvents: EventData list, userEvents: EventData list)
         : RelationshipTuple list * string list =
         let spaceId = space.State.Id.Value.ToString()
         let defaultMemberSubject = UserSetFromRelation("space", spaceId, "member")
@@ -328,8 +344,12 @@ type OpenFgaSpaceAuthorizationRepairService
                 targetSpaces
                 |> List.map (fun space -> task {
                     let spaceId = space.State.Id.Value.ToString()
-                    let defaultEvents = defaultMemberEventsBySpace |> Map.tryFind spaceId |> Option.defaultValue []
-                    let userEvents = userPermissionEventsBySpace |> Map.tryFind spaceId |> Option.defaultValue []
+
+                    let defaultEvents =
+                        defaultMemberEventsBySpace |> Map.tryFind spaceId |> Option.defaultValue []
+
+                    let userEvents =
+                        userPermissionEventsBySpace |> Map.tryFind spaceId |> Option.defaultValue []
 
                     let desiredRelationships, warnings =
                         this.BuildDesiredRelationships(space, defaultEvents, userEvents)
@@ -352,17 +372,24 @@ type OpenFgaSpaceAuthorizationRepairService
                         desiredLookup
                         |> Map.toList
                         |> List.choose (fun (key, tuple) ->
-                            if currentLookup |> Map.containsKey key then None else Some tuple)
+                            if currentLookup |> Map.containsKey key then
+                                None
+                            else
+                                Some tuple)
 
                     let relationshipsToRemove =
                         currentLookup
                         |> Map.toList
                         |> List.choose (fun (key, tuple) ->
-                            if desiredLookup |> Map.containsKey key then None else Some tuple)
+                            if desiredLookup |> Map.containsKey key then
+                                None
+                            else
+                                Some tuple)
 
                     if
                         apply
-                        && (not (List.isEmpty relationshipsToAdd) || not (List.isEmpty relationshipsToRemove))
+                        && (not (List.isEmpty relationshipsToAdd)
+                            || not (List.isEmpty relationshipsToRemove))
                     then
                         do!
                             authService.UpdateRelationshipsAsync {
@@ -391,7 +418,8 @@ type OpenFgaSpaceAuthorizationRepairService
                             |> List.sort
                         Applied =
                             apply
-                            && (not (List.isEmpty relationshipsToAdd) || not (List.isEmpty relationshipsToRemove))
+                            && (not (List.isEmpty relationshipsToAdd)
+                                || not (List.isEmpty relationshipsToRemove))
                         Warnings = warnings
                     }
                 })
