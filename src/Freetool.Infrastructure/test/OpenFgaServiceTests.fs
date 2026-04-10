@@ -18,6 +18,9 @@ let createServiceWithoutStore () =
 let createServiceWithStore storeId =
     OpenFgaService(openFgaApiUrl, NullLogger<OpenFgaService>.Instance, storeId) :> IAuthorizationService
 
+let createConcreteServiceWithStore storeId =
+    OpenFgaService(openFgaApiUrl, NullLogger<OpenFgaService>.Instance, storeId)
+
 [<Fact>]
 let ``CreateStoreAsync creates a new store successfully`` () : Task = task {
     // Arrange
@@ -222,6 +225,58 @@ let ``UpdateRelationshipsAsync is idempotent for add-only duplicate tuples`` () 
 
     let! isMember = service.CheckPermissionAsync (User "carol") SpaceMember (SpaceObject "engineering")
     Assert.True(isMember)
+}
+
+[<Fact>]
+let ``ReadRelationshipsAsync returns typed tuples for a space object`` () : Task = task {
+    let serviceWithoutStore = createServiceWithoutStore ()
+
+    let! storeResponse =
+        serviceWithoutStore.CreateStoreAsync(
+            {
+                Name = $"test-read-tuples-{Guid.NewGuid()}"
+            }
+        )
+
+    let concreteService = createConcreteServiceWithStore storeResponse.Id
+    let authService = concreteService :> IAuthorizationService
+    let relationshipReader = concreteService :> IAuthorizationRelationshipReader
+
+    let! _ = authService.WriteAuthorizationModelAsync()
+
+    let engineeringTuples = [
+        {
+            Subject = User "alice"
+            Relation = SpaceMember
+            Object = SpaceObject "engineering"
+        }
+        {
+            Subject = Organization "default"
+            Relation = SpaceOrganization
+            Object = SpaceObject "engineering"
+        }
+        {
+            Subject = UserSetFromRelation("space", "engineering", "member")
+            Relation = AppRun
+            Object = SpaceObject "engineering"
+        }
+    ]
+
+    let supportTuple = {
+        Subject = User "bob"
+        Relation = SpaceMember
+        Object = SpaceObject "support"
+    }
+
+    do! authService.CreateRelationshipsAsync(engineeringTuples @ [ supportTuple ])
+
+    let! relationships = relationshipReader.ReadRelationshipsAsync(SpaceObject "engineering")
+
+    Assert.Equal(3, relationships.Length)
+    Assert.Contains(engineeringTuples[0], relationships)
+    Assert.Contains(engineeringTuples[1], relationships)
+    Assert.Contains(engineeringTuples[2], relationships)
+    Assert.DoesNotContain(supportTuple, relationships)
 }
 
 [<Fact>]

@@ -258,6 +258,76 @@ let private createUserPermissionEvent
     }
 
 [<Fact>]
+let ``AuthTypes parsing helpers parse supported tuple strings`` () =
+    Assert.Equal(Some(Freetool.Application.Interfaces.User "alice"), AuthTypes.tryParseSubject "user:alice")
+
+    Assert.Equal(
+        Some(Freetool.Application.Interfaces.Space "engineering"),
+        AuthTypes.tryParseSubject "space:engineering"
+    )
+
+    Assert.Equal(
+        Some(Freetool.Application.Interfaces.Organization "default"),
+        AuthTypes.tryParseSubject "organization:default"
+    )
+
+    Assert.Equal(
+        Some(UserSetFromRelation("space", "engineering", "member")),
+        AuthTypes.tryParseSubject "space:engineering#member"
+    )
+
+    Assert.True(AuthTypes.tryParseSubject "" |> Option.isNone)
+    Assert.True(AuthTypes.tryParseSubject "not-a-subject" |> Option.isNone)
+
+    let relationCases = [
+        ("admin", OrganizationAdmin)
+        ("member", SpaceMember)
+        ("moderator", SpaceModerator)
+        ("organization", SpaceOrganization)
+        ("create", SpaceCreate)
+        ("rename", SpaceRename)
+        ("delete", SpaceDelete)
+        ("add_member", SpaceAddMember)
+        ("remove_member", SpaceRemoveMember)
+        ("create_resource", ResourceCreate)
+        ("edit_resource", ResourceEdit)
+        ("delete_resource", ResourceDelete)
+        ("create_app", AppCreate)
+        ("edit_app", AppEdit)
+        ("delete_app", AppDelete)
+        ("run_app", AppRun)
+        ("create_dashboard", DashboardCreate)
+        ("edit_dashboard", DashboardEdit)
+        ("delete_dashboard", DashboardDelete)
+        ("run_dashboard", DashboardRun)
+        ("create_folder", FolderCreate)
+        ("edit_folder", FolderEdit)
+        ("delete_folder", FolderDelete)
+    ]
+
+    for (relationName, expectedRelation) in relationCases do
+        Assert.Equal(Some expectedRelation, AuthTypes.tryParseRelation relationName)
+
+    Assert.True(AuthTypes.tryParseRelation "unknown_relation" |> Option.isNone)
+
+    Assert.Equal(Some(UserObject "alice"), AuthTypes.tryParseObject "user:alice")
+    Assert.Equal(Some(SpaceObject "engineering"), AuthTypes.tryParseObject "space:engineering")
+    Assert.Equal(Some(OrganizationObject "default"), AuthTypes.tryParseObject "organization:default")
+    Assert.Equal(Some(SpaceObject "engineering#member"), AuthTypes.tryParseObject "space:engineering#member")
+    Assert.True(AuthTypes.tryParseObject "workspace:engineering" |> Option.isNone)
+    Assert.True(AuthTypes.tryParseObject "not-an-object" |> Option.isNone)
+
+[<Fact>]
+let ``RelationshipTuple toDisplayString formats tuple identity`` () =
+    let tuple = {
+        Subject = UserSetFromRelation("space", "engineering", "member")
+        Relation = AppRun
+        Object = SpaceObject "engineering"
+    }
+
+    Assert.Equal("space:engineering#run_app@space:engineering#member", RelationshipTuple.toDisplayString tuple)
+
+[<Fact>]
 let ``relationToAuditName returns audit permission name`` () =
     Assert.Equal("RunApp", OpenFgaSpaceAuthorizationRepair.relationToAuditName AppRun)
 
