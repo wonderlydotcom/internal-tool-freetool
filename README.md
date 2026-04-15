@@ -656,7 +656,7 @@ This project uses **SQLite** with **DBUp** for database migrations. SQLite is a 
 
 2. **Restore dependencies**
    ```bash
-   dotnet restore
+   dotnet restore Freetool.sln
    ```
 
 3. **Install frontend dependencies**

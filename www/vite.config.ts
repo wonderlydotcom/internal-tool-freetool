@@ -11,43 +11,43 @@ export default defineConfig(({ mode }) => ({
     proxy: {
       // Only proxy API routes, not static assets
       "/app": {
-        target: process.env.VITE_API_URL || "http://localhost:5002",
+        target: process.env.VITE_API_URL || "http://localhost:5001",
         changeOrigin: true,
       },
       "/audit": {
-        target: process.env.VITE_API_URL || "http://localhost:5002",
+        target: process.env.VITE_API_URL || "http://localhost:5001",
         changeOrigin: true,
       },
       "/dev": {
-        target: process.env.VITE_API_URL || "http://localhost:5002",
+        target: process.env.VITE_API_URL || "http://localhost:5001",
         changeOrigin: true,
       },
       "/dashboard": {
-        target: process.env.VITE_API_URL || "http://localhost:5002",
+        target: process.env.VITE_API_URL || "http://localhost:5001",
         changeOrigin: true,
       },
       "/folder": {
-        target: process.env.VITE_API_URL || "http://localhost:5002",
+        target: process.env.VITE_API_URL || "http://localhost:5001",
         changeOrigin: true,
       },
       "/resource": {
-        target: process.env.VITE_API_URL || "http://localhost:5002",
+        target: process.env.VITE_API_URL || "http://localhost:5001",
         changeOrigin: true,
       },
       "/space": {
-        target: process.env.VITE_API_URL || "http://localhost:5002",
+        target: process.env.VITE_API_URL || "http://localhost:5001",
         changeOrigin: true,
       },
       "/trash": {
-        target: process.env.VITE_API_URL || "http://localhost:5002",
+        target: process.env.VITE_API_URL || "http://localhost:5001",
         changeOrigin: true,
       },
       "/user": {
-        target: process.env.VITE_API_URL || "http://localhost:5002",
+        target: process.env.VITE_API_URL || "http://localhost:5001",
         changeOrigin: true,
       },
       "/admin": {
-        target: process.env.VITE_API_URL || "http://localhost:5002",
+        target: process.env.VITE_API_URL || "http://localhost:5001",
         changeOrigin: true,
       },
     },
