@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+if (( BASH_VERSINFO[0] < 4 )); then
+  printf 'This script requires Bash 4.0 or newer; found %s.\n' "${BASH_VERSION:-unknown}" >&2
+  exit 1
+fi
+
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
