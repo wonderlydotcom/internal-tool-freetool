@@ -110,6 +110,9 @@ export default function ResourcesView({
   const [deletingResourceId, setDeletingResourceId] = useState<string | null>(
     null
   );
+  const [confirmDeleteResourceId, setConfirmDeleteResourceId] = useState<
+    string | null
+  >(null);
 
   // Pagination
   const { currentPage, pageSize, skip, totalPages, goToPage, setTotalCount } =
@@ -602,8 +605,9 @@ export default function ResourcesView({
                                 variant="ghost"
                                 size="icon"
                                 className="h-8 w-8"
+                                aria-label="Delete resource"
                                 onClick={() =>
-                                  handleDeleteResource(resource.id)
+                                  setConfirmDeleteResourceId(resource.id)
                                 }
                                 disabled={
                                   !canDeleteResource(resource.id) ||
@@ -658,6 +662,42 @@ export default function ResourcesView({
           />
         </>
       )}
+
+      <Dialog
+        open={!!confirmDeleteResourceId}
+        onOpenChange={() => setConfirmDeleteResourceId(null)}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete resource?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This action cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setConfirmDeleteResourceId(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deletingResourceId === confirmDeleteResourceId}
+              onClick={async () => {
+                if (confirmDeleteResourceId) {
+                  await handleDeleteResource(confirmDeleteResourceId);
+                  setConfirmDeleteResourceId(null);
+                }
+              }}
+            >
+              {deletingResourceId === confirmDeleteResourceId
+                ? "Deleting..."
+                : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!editingResource} onOpenChange={() => handleCloseEdit()}>
         <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
