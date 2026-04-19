@@ -107,6 +107,24 @@ resolve_solution_file() {
   echo "${solutions[0]}"
 }
 
+ensure_www_node_modules() {
+  if [ ! -d "$ROOT_DIR/www" ] || [ -d "$ROOT_DIR/www/node_modules" ]; then
+    return
+  fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "Frontend checks require 'npm' in PATH."
+    exit 1
+  fi
+
+  echo
+  echo "==> Installing frontend dependencies"
+  (
+    cd "$ROOT_DIR/www"
+    npm install
+  )
+}
+
 ensure_frontend_runner() {
   if [ "${#FRONTEND_RUNNER[@]}" -gt 0 ]; then
     return
@@ -489,6 +507,7 @@ if [ "$RUN_FRONTEND" = true ] || [ "$RUN_CONTRACT_VALIDATION" = true ]; then
   ensure_frontend_runner
 fi
 
+ensure_www_node_modules
 VALIDATION_TRACKED_STATUS="$(capture_tracked_status)"
 
 run_step "Checking git diff formatting" git diff --check
