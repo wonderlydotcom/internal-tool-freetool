@@ -1,6 +1,7 @@
 module Freetool.Infrastructure.Tests.EventRepositoryTests
 
 open System
+open System.IO
 open Xunit
 open Microsoft.Data.Sqlite
 open Microsoft.EntityFrameworkCore
@@ -66,6 +67,21 @@ let private createRun (runId: RunId) (appId: AppId) (createdAt: DateTime) = {
     CreatedAt = createdAt
     IsDeleted = false
 }
+
+[<Fact>]
+let ``upgradeDatabase creates nested parent directory and database file`` () =
+    let tempRoot = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"))
+    let dbPath = Path.Combine(tempRoot, "nested", "freetool.db")
+    let connectionString = $"Data Source={dbPath}"
+
+    try
+        Persistence.upgradeDatabase connectionString
+
+        Assert.True(Directory.Exists(Path.GetDirectoryName dbPath))
+        Assert.True(File.Exists(dbPath))
+    finally
+        if Directory.Exists(tempRoot) then
+            Directory.Delete(tempRoot, true)
 
 [<Fact>]
 let ``GetEventsByUserIdAsync returns only matching user's events with pagination`` () = task {

@@ -251,6 +251,7 @@ let main args =
     // This ensures the Settings table exists for storing the store ID
     let connectionString =
         builder.Configuration.GetConnectionString(ConfigurationKeys.DefaultConnection)
+        |> Persistence.prepareSqliteConnectionString
 
     Persistence.upgradeDatabase connectionString
 
@@ -296,7 +297,7 @@ let main args =
 
     builder.Services.AddDbContext<FreetoolDbContext>(fun options ->
         options
-            .UseSqlite(builder.Configuration.GetConnectionString ConfigurationKeys.DefaultConnection)
+            .UseSqlite(connectionString)
             .ReplaceService<
                 Microsoft.EntityFrameworkCore.Storage.IExecutionStrategyFactory,
                 SqliteExecutionStrategyFactory
