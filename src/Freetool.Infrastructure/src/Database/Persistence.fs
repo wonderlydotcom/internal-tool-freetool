@@ -1,5 +1,7 @@
 namespace Freetool.Infrastructure.Database
 
+open System
+open System.IO
 open System.Data.Common
 open System.Reflection
 open DbUp
@@ -13,6 +15,32 @@ module Persistence =
         let builder = SqliteConnectionStringBuilder()
         builder.DataSource <- dataSource
         builder.ToString()
+
+    let private ensureParentDirectoryExists (connectionString: string) =
+        let builder = SqliteConnectionStringBuilder(connectionString)
+        let dataSource = builder.DataSource |> Option.ofObj |> Option.defaultValue ""
+
+        let shouldEnsureDirectory =
+            not (String.IsNullOrWhiteSpace dataSource)
+            && not (String.Equals(dataSource, ":memory:", StringComparison.OrdinalIgnoreCase))
+            && builder.Mode <> SqliteOpenMode.Memory
+            && not (dataSource.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+
+        if shouldEnsureDirectory then
+            let dbPath =
+                if Path.IsPathRooted dataSource then
+                    dataSource
+                else
+                    Path.GetFullPath dataSource
+
+            let directory = Path.GetDirectoryName dbPath
+
+            if not (String.IsNullOrWhiteSpace directory) then
+                Directory.CreateDirectory(directory) |> ignore
+
+    let prepareSqliteConnectionString (connectionString: string) =
+        ensureParentDirectoryExists connectionString
+        connectionString
 
     let getDbConnectionAsync connectionString : Async<DbConnection> = async {
         let dbConnection = new SqliteConnection(connectionString)
@@ -37,7 +65,8 @@ module Persistence =
         command.ExecuteNonQuery() |> ignore
 
     let upgradeDatabase (connectionString: string) =
-        // SQLite creates the database file automatically if it doesn't exist
+        let connectionString = prepareSqliteConnectionString connectionString
+
         let upgrader =
             DeployChanges.To
                 .SQLiteDatabase(connectionString: string)
