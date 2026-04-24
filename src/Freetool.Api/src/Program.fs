@@ -1,6 +1,7 @@
 open Microsoft.AspNetCore.Builder
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
+open Freetool.Api.Telemetry
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.Logging
 open Microsoft.Extensions.Logging.Abstractions
@@ -10,8 +11,6 @@ open Microsoft.AspNetCore.StaticFiles
 open System.Text.Json.Serialization
 open System.Diagnostics
 open System
-open OpenTelemetry.Resources
-open OpenTelemetry.Trace
 open OpenTelemetry.Exporter
 open Freetool.Infrastructure.Database
 open Freetool.Infrastructure.Database.Repositories
@@ -466,25 +465,7 @@ let main args =
     // Configure OpenTelemetry
     let activitySource = new ActivitySource("Freetool.Api")
     builder.Services.AddSingleton<ActivitySource>(activitySource) |> ignore
-
-    builder.Services
-        .AddOpenTelemetry()
-        .WithTracing(fun tracing ->
-            tracing
-                .SetResourceBuilder(ResourceBuilder.CreateDefault().AddService("freetool-api", "1.0.0"))
-                .AddSource("Freetool.Api")
-                .AddAspNetCoreInstrumentation()
-                .AddEntityFrameworkCoreInstrumentation()
-                .AddOtlpExporter(fun options ->
-                    let endpoint = builder.Configuration[ConfigurationKeys.Environment.OtlpEndpoint]
-
-                    if not (System.String.IsNullOrEmpty(endpoint)) then
-                        options.Endpoint <- System.Uri(endpoint)
-                        options.Protocol <- OtlpExportProtocol.Grpc
-                    else
-                        startupLogger.LogInformation("No OTLP endpoint configured, using default"))
-            |> ignore)
-    |> ignore
+    AppTelemetrySettings.addConfiguredOpenTelemetry builder.Services "Freetool.Api" "freetool-api" builder.Configuration
 
     let app = builder.Build()
 
