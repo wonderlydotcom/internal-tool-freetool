@@ -129,10 +129,7 @@ module AppTelemetrySettings =
                 if settings.OtlpConfigured then
                     tracing.AddOtlpExporter(configureOtlpExporter "traces" settings) |> ignore)
             .WithMetrics(fun metrics ->
-                metrics
-                    .AddAspNetCoreInstrumentation()
-                    .AddHttpClientInstrumentation()
-                |> ignore
+                metrics.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation() |> ignore
 
                 if settings.OtlpConfigured then
                     metrics.AddOtlpExporter(configureOtlpExporter "metrics" settings) |> ignore)

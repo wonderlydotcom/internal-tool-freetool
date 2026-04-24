@@ -108,6 +108,7 @@ let add_open_telemetry_registers_providers_and_otel_logging_options () =
     AppTelemetrySettings.addOpenTelemetry services "Freetool.Api" "freetool-api" settingsWithoutExporter
 
     use provider = services.BuildServiceProvider()
+
     let loggerOptions =
         provider.GetRequiredService<IOptions<OpenTelemetryLoggerOptions>>().Value
 
@@ -123,10 +124,7 @@ let add_configured_open_telemetry_reads_configuration_and_registers_telemetry_se
     let services = ServiceCollection()
 
     let configuration =
-        buildConfiguration [
-            "INTERNAL_TOOLS_APP_ID", "test-app"
-            "INTERNAL_TOOLS_TENANT_ID", "app-test"
-        ]
+        buildConfiguration [ "INTERNAL_TOOLS_APP_ID", "test-app"; "INTERNAL_TOOLS_TENANT_ID", "app-test" ]
 
     AppTelemetrySettings.addConfiguredOpenTelemetry services "Freetool.Api" "freetool-api" configuration
 
