@@ -60,9 +60,7 @@ jobs:
           cache-dependency-path: www/package-lock.json
 
       - name: Set up OpenTofu
-        uses: opentofu/setup-opentofu@v1
-        with:
-          tofu_version: 1.8.8
+        run: scripts/setup-opentofu.sh
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
