@@ -33,6 +33,7 @@ def is_backend_source_file(relative_path: str) -> bool:
     return (
         relative_path.startswith("src/")
         and path.suffix.lower() in BACKEND_SOURCE_EXTENSIONS
+        and path.name.lower() not in {"program.fs", "program.cs"}
         and "test" not in {part.lower() for part in path.parts}
     )
 

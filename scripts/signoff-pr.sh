@@ -241,6 +241,24 @@ validate_python_scripts() {
 
   PYTHONPYCACHEPREFIX="$TMP_ROOT/python-pycache" python3 -m py_compile "${CHANGED_PYTHON_FILES[@]}"
 }
+validate_hosted_service_registrations() {
+  if [ ! -f "$ROOT_DIR/scripts/check_hosted_service_registrations.py" ]; then
+    echo "No hosted-service registration checker found; skipping DI registration validation."
+    return
+  fi
+
+  local scan_roots=()
+  [ -d "$ROOT_DIR/src" ] && scan_roots+=(src)
+  [ -d "$ROOT_DIR/backend" ] && scan_roots+=(backend)
+
+  if [ "${#scan_roots[@]}" -eq 0 ]; then
+    echo "No backend source roots found; skipping hosted-service DI registration validation."
+    return
+  fi
+
+  PYTHONPYCACHEPREFIX="$TMP_ROOT/python-pycache" python3 scripts/check_hosted_service_registrations.py "${scan_roots[@]}"
+}
+
 
 validate_tofu_root() {
   local root="$1"
@@ -471,7 +489,7 @@ mapfile -t CHANGED_PYTHON_FILES < <(
   printf '%s\n' "${CHANGED_FILES[@]}" | grep -E '^[^[:space:]]+\.py$' || true
 )
 
-if grep -qE '^(src/|scripts/signoff-pr\.sh$|scripts/check_changed_coverage\.py$|[^/]+\.sln$|Directory\.Build\.props$|\.editorconfig$|\.config/dotnet-tools\.json$)' <<<"$CHANGED_FILES_TEXT"; then
+if grep -qE '^(src/|scripts/signoff-pr\.sh$|scripts/check_changed_coverage\.py$|scripts/check_hosted_service_registrations\.py$|[^/]+\.sln$|Directory\.Build\.props$|\.editorconfig$|\.config/dotnet-tools\.json$)' <<<"$CHANGED_FILES_TEXT"; then
   RUN_BACKEND=true
 fi
 
@@ -516,6 +534,7 @@ if [ "$RUN_BACKEND" = true ]; then
   ensure_python_available
   run_step "Restoring local dotnet tools" dotnet tool restore
   run_step "Running formatter check" dotnet tool run fantomas --check .
+  run_step "Checking hosted-service DI registrations" validate_hosted_service_registrations
   run_step "Building solution (Release)" dotnet build "$SOLUTION_FILE" -c Release
 
   if repo_uses_openfga; then
