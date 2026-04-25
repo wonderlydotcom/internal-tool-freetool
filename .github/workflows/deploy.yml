@@ -91,7 +91,24 @@ jobs:
       - name: Init OpenTofu backend
         run: |
           set -euo pipefail
-          tofu -chdir="${INFRA_DIR}" init -input=false
+          # OpenTofu provider downloads/signature checks can fail transiently via the
+          # upstream registry or GitHub release assets. Retry init only; do not retry apply.
+          for attempt in 1 2 3; do
+            if tofu -chdir="${INFRA_DIR}" init -input=false; then
+              exit 0
+            fi
+
+            if [[ "${attempt}" == "3" ]]; then
+              break
+            fi
+
+            sleep_seconds=$((attempt * 15))
+            echo "OpenTofu init failed on attempt ${attempt}; retrying in ${sleep_seconds}s..." >&2
+            sleep "${sleep_seconds}"
+          done
+
+          echo "OpenTofu init failed after 3 attempts." >&2
+          exit 1
 
       - name: Deploy app
         run: scripts/deploy-app-from-tofu.sh
