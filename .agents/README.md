@@ -5,6 +5,7 @@ Shared internal-tools workflows are checked in here as thin `SKILL.md` stubs tha
 ## Shared Stubs
 
 - Use the matching shared stub before controller/endpoint, persistence, migration, infra, deploy, secret, OpenAPI, and review work.
+- Use `app-observability` for standard app telemetry triage through `internal-tools logs`, `internal-tools traces`, `internal-tools metrics`, and `internal-tools alerts`.
 - If the right shared workflow is not obvious, call `internal-tools.recommend_workflows` first, then `internal-tools.use_workflow` for the top match before editing.
 - After loading a primary workflow, also consult related shared stubs such as `domain-driven-design`, `event-sourcing-audit`, and `otel-tracing` when they exist in this repo and the task touches business rules, audit/events, or new request paths.
 - Keep `freetool-controller-authoring`, `freetool-iap-auth-architecture`, and `freetool-openfga-hexagonal-architecture` as the full repo-local override skills.

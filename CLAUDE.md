@@ -15,6 +15,7 @@ Shared internal-tools skills are served by the deployed `internal-tools-mcp` ser
 - No bearer token or local secret bootstrap is required before starting either client.
 - Shared internal-tools workflows are now surfaced locally as thin `.agents/skills/*/SKILL.md` stubs that delegate to `internal-tools.use_workflow`.
 - If the right shared workflow is not obvious, call `internal-tools.recommend_workflows` first, then call `internal-tools.use_workflow` for the top match before editing.
+- Use `app-observability` for owner-safe app telemetry triage through `internal-tools logs`, `internal-tools traces`, `internal-tools metrics`, and `internal-tools alerts` before reaching for backend-specific debugging.
 - Before editing EF Core mappings, repositories, or `DbContext` code, load `entity-framework-fsharp` first.
 - Before editing schema or migration code, load `db-migrations` first.
 - Consult the matching shared stub before infra, deploy, secret, OpenAPI, or review work when the task clearly maps to one of those workflows.
