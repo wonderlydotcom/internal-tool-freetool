@@ -96,11 +96,11 @@ variable "runtime_secrets_mount_path" {
 variable "openfga_image" {
   description = "OpenFGA image used for the sidecar and migration init container."
   type        = string
-  default     = "openfga/openfga@sha256:f0d5591d7ddda326ac4b84dbc9d9192cb13e97f79957749006ef0774b0d818f6"
+  default     = "openfga/openfga@sha256:38857bdc425316ebe6dabd1cde52e05c48e6e8bff781713b7c36da8d5ed68205"
 
   validation {
-    condition     = trimspace(var.openfga_image) != ""
-    error_message = "openfga_image must not be empty."
+    condition     = trimspace(var.openfga_image) != "" && !endswith(trimspace(var.openfga_image), ":latest") && can(regex("@sha256:[a-f0-9]{64}$", trimspace(var.openfga_image)))
+    error_message = "openfga_image must be pinned to an immutable sha256 digest and must not use :latest."
   }
 }
 
