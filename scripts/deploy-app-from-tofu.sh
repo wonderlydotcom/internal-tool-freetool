@@ -17,7 +17,7 @@ Environment overrides:
   ARTIFACT_REGISTRY_LOCATION   Artifact Registry location
   ARTIFACT_REGISTRY_REPO       Per-app Artifact Registry repo ID
   ROLLOUT_TIMEOUT              kubectl rollout timeout (default: 5m)
-  SMOKE_TIMEOUT                Candidate smoke Pod health timeout (default: 3m)
+  SMOKE_TIMEOUT                Candidate smoke Job health timeout (default: 3m)
   DOCKER_PLATFORM              docker build platform (default: linux/amd64)
   PUBLISH_LATEST               Also push :latest when IMAGE_TAG != latest (default: false)
   SKIP_PRE_PROMOTION_SMOKE     Skip the candidate smoke workload gate (default: false)
@@ -532,7 +532,8 @@ cleanup_smoke_workload() {
     return 0
   fi
 
-  kubectl -n "${SMOKE_NAMESPACE}" delete pod "${SMOKE_WORKLOAD_NAME}" \
+  kubectl -n "${SMOKE_NAMESPACE}" delete job "${SMOKE_WORKLOAD_NAME}" \
+    --cascade=foreground \
     --ignore-not-found=true --wait=true --timeout=60s >/dev/null 2>&1 || true
 }
 
@@ -558,27 +559,27 @@ render_smoke_workload_manifest() {
 
   if [[ -n "${app_config_map_name}" && "${app_config_map_name}" != "null" ]]; then
     app_config_env_from="
-        - configMapRef:
-            name: ${app_config_map_name}"
+            - configMapRef:
+                name: ${app_config_map_name}"
   fi
 
   if [[ -n "${secret_provider_class_name}" && "${secret_provider_class_name}" != "null" ]]; then
     secret_volume_mount="
-        - name: runtime-secrets
-          mountPath: ${runtime_secrets_mount_path}
-          readOnly: true"
+            - name: runtime-secrets
+              mountPath: ${runtime_secrets_mount_path}
+              readOnly: true"
     secret_volume="
-    - name: runtime-secrets
-      csi:
-        driver: secrets-store-gke.csi.k8s.io
-        readOnly: true
-        volumeAttributes:
-          secretProviderClass: ${secret_provider_class_name}"
+        - name: runtime-secrets
+          csi:
+            driver: secrets-store-gke.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: ${secret_provider_class_name}"
   fi
 
   cat <<EOF
-apiVersion: v1
-kind: Pod
+apiVersion: batch/v1
+kind: Job
 metadata:
   name: ${smoke_workload_name}
   namespace: ${namespace}
@@ -586,82 +587,116 @@ metadata:
     app.kubernetes.io/name: ${smoke_workload_name}
     app.kubernetes.io/managed-by: deploy-smoke
     internal-tools.wonderly.io/deploy-smoke: "true"
-    internal-tools.wonderly.io/service: backup
 spec:
   activeDeadlineSeconds: ${active_deadline_seconds}
-  restartPolicy: Never
-  serviceAccountName: ${runtime_service_account}
-  terminationGracePeriodSeconds: 5
-  initContainers:
-    - name: prepare-data-dirs
-      image: busybox:1.36
-      command: ["/bin/sh", "-c"]
-      args:
-        - mkdir -p /mnt/pvc/${sqlite_pvc_subpath} /mnt/pvc/${openfga_pvc_subpath} && chmod -R a+rwX /mnt/pvc/${sqlite_pvc_subpath} /mnt/pvc/${openfga_pvc_subpath}
-      volumeMounts:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ${smoke_workload_name}
+        app.kubernetes.io/managed-by: deploy-smoke
+        internal-tools.wonderly.io/deploy-smoke: "true"
+        internal-tools.wonderly.io/service: backup
+    spec:
+      restartPolicy: Never
+      serviceAccountName: ${runtime_service_account}
+      terminationGracePeriodSeconds: 5
+      initContainers:
+        - name: prepare-data-dirs
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args:
+            - mkdir -p /mnt/pvc/${sqlite_pvc_subpath} /mnt/pvc/${openfga_pvc_subpath} && chmod -R a+rwX /mnt/pvc/${sqlite_pvc_subpath} /mnt/pvc/${openfga_pvc_subpath}
+          volumeMounts:
+            - name: data
+              mountPath: /mnt/pvc
+        - name: openfga-migrate
+          image: ${openfga_image}
+          args: ["migrate"]
+          env:
+            - name: OPENFGA_DATASTORE_ENGINE
+              value: sqlite
+            - name: OPENFGA_DATASTORE_URI
+              value: file:${openfga_data_mount_path}/openfga.db
+          volumeMounts:
+            - name: data
+              mountPath: ${openfga_data_mount_path}
+              subPath: ${openfga_pvc_subpath}
+      containers:
+        - name: api
+          image: ${image_ref}
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: ${runtime_contract_config_map}${app_config_env_from}
+          readinessProbe:
+            httpGet:
+              path: ${health_check_path}
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 24
+          volumeMounts:
+            - name: data
+              mountPath: ${data_mount_path}
+              subPath: ${sqlite_pvc_subpath}${secret_volume_mount}
+        - name: openfga
+          image: ${openfga_image}
+          args: ["run"]
+          ports:
+            - name: openfga-http
+              containerPort: 8090
+            - name: openfga-grpc
+              containerPort: 8091
+          env:
+            - name: OPENFGA_DATASTORE_ENGINE
+              value: sqlite
+            - name: OPENFGA_DATASTORE_URI
+              value: file:${openfga_data_mount_path}/openfga.db
+            - name: OPENFGA_LOG_FORMAT
+              value: json
+            - name: OPENFGA_HTTP_ADDR
+              value: 0.0.0.0:8090
+            - name: OPENFGA_GRPC_ADDR
+              value: 0.0.0.0:8091
+          volumeMounts:
+            - name: data
+              mountPath: ${openfga_data_mount_path}
+              subPath: ${openfga_pvc_subpath}
+      volumes:
         - name: data
-          mountPath: /mnt/pvc
-    - name: openfga-migrate
-      image: ${openfga_image}
-      args: ["migrate"]
-      env:
-        - name: OPENFGA_DATASTORE_ENGINE
-          value: sqlite
-        - name: OPENFGA_DATASTORE_URI
-          value: file:${openfga_data_mount_path}/openfga.db
-      volumeMounts:
-        - name: data
-          mountPath: ${openfga_data_mount_path}
-          subPath: ${openfga_pvc_subpath}
-  containers:
-    - name: api
-      image: ${image_ref}
-      imagePullPolicy: Always
-      ports:
-        - name: http
-          containerPort: 8080
-      envFrom:
-        - configMapRef:
-            name: ${runtime_contract_config_map}${app_config_env_from}
-      readinessProbe:
-        httpGet:
-          path: ${health_check_path}
-          port: 8080
-        initialDelaySeconds: 5
-        periodSeconds: 5
-        timeoutSeconds: 5
-        failureThreshold: 24
-      volumeMounts:
-        - name: data
-          mountPath: ${data_mount_path}
-          subPath: ${sqlite_pvc_subpath}${secret_volume_mount}
-    - name: openfga
-      image: ${openfga_image}
-      args: ["run"]
-      ports:
-        - name: openfga-http
-          containerPort: 8090
-        - name: openfga-grpc
-          containerPort: 8091
-      env:
-        - name: OPENFGA_DATASTORE_ENGINE
-          value: sqlite
-        - name: OPENFGA_DATASTORE_URI
-          value: file:${openfga_data_mount_path}/openfga.db
-        - name: OPENFGA_LOG_FORMAT
-          value: json
-        - name: OPENFGA_HTTP_ADDR
-          value: 0.0.0.0:8090
-        - name: OPENFGA_GRPC_ADDR
-          value: 0.0.0.0:8091
-      volumeMounts:
-        - name: data
-          mountPath: ${openfga_data_mount_path}
-          subPath: ${openfga_pvc_subpath}
-  volumes:
-    - name: data
-      emptyDir: {}${secret_volume}
+          emptyDir: {}${secret_volume}
 EOF
+}
+
+wait_for_smoke_pod_name() {
+  local namespace="$1"
+  local selector="$2"
+  local deadline=""
+  local pod_name=""
+
+  deadline="$(($(date '+%s') + SMOKE_TIMEOUT_SECONDS))"
+
+  while [[ "$(date '+%s')" -le "${deadline}" ]]; do
+    pod_name="$(
+      kubectl -n "${namespace}" get pods -l "${selector}" -o json \
+        | jq -r '.items | sort_by(.metadata.creationTimestamp) | last // empty | .metadata.name // empty'
+    )"
+
+    if [[ -n "${pod_name}" ]]; then
+      printf '%s' "${pod_name}"
+      return 0
+    fi
+
+    sleep 2
+  done
+
+  return 1
 }
 
 run_pre_promotion_smoke() {
@@ -679,6 +714,8 @@ run_pre_promotion_smoke() {
   local openfga_data_mount_path="${12}"
   local sqlite_pvc_subpath="${13}"
   local openfga_pvc_subpath="${14}"
+  local smoke_pod_name=""
+  local smoke_selector=""
   local smoke_workload_name=""
 
   if is_true "${SKIP_PRE_PROMOTION_SMOKE}"; then
@@ -709,8 +746,9 @@ run_pre_promotion_smoke() {
   smoke_workload_name="$(make_k8s_name "${workload_name}-deploy-smoke-${IMAGE_TAG}-${RANDOM}")"
   SMOKE_NAMESPACE="${namespace}"
   SMOKE_WORKLOAD_NAME="${smoke_workload_name}"
+  smoke_selector="app.kubernetes.io/name=${SMOKE_WORKLOAD_NAME},internal-tools.wonderly.io/deploy-smoke=true"
 
-  log "Running pre-promotion smoke Pod ${SMOKE_WORKLOAD_NAME} with ${image_ref}"
+  log "Running pre-promotion smoke Job ${SMOKE_WORKLOAD_NAME} with ${image_ref}"
   render_smoke_workload_manifest \
     "${namespace}" \
     "${SMOKE_WORKLOAD_NAME}" \
@@ -728,9 +766,16 @@ run_pre_promotion_smoke() {
     "${openfga_pvc_subpath}" \
     | kubectl apply -f - >/dev/null
 
-  if ! kubectl -n "${namespace}" wait --for=condition=Ready "pod/${SMOKE_WORKLOAD_NAME}" --timeout "${SMOKE_TIMEOUT}"; then
+  if ! smoke_pod_name="$(wait_for_smoke_pod_name "${namespace}" "${smoke_selector}")"; then
+    echo "Pre-promotion smoke gate failed because no pod was created for ${image_ref}." >&2
+    print_rollout_debug "${namespace}" "job" "${SMOKE_WORKLOAD_NAME}"
+    cleanup_smoke_workload
+    exit 1
+  fi
+
+  if ! kubectl -n "${namespace}" wait --for=condition=Ready "pod/${smoke_pod_name}" --timeout "${SMOKE_TIMEOUT}"; then
     echo "Pre-promotion smoke gate failed for ${image_ref}." >&2
-    print_rollout_debug "${namespace}" "pod" "${SMOKE_WORKLOAD_NAME}"
+    print_rollout_debug "${namespace}" "job" "${SMOKE_WORKLOAD_NAME}"
     cleanup_smoke_workload
     exit 1
   fi
