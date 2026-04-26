@@ -1,8 +1,9 @@
 locals {
   secret_provider_class_value = try(trimspace(var.platform_contract.secret_provider_class), "")
   secret_provider_class_name  = local.secret_provider_class_value != "" ? local.secret_provider_class_value : null
+  image_digest_value          = trimspace(coalesce(var.image_digest, ""))
 
-  image_ref = format(
+  image_tag_ref = format(
     "%s-docker.pkg.dev/%s/%s/%s:%s",
     var.artifact_registry_location,
     var.project_id,
@@ -10,6 +11,17 @@ locals {
     var.image_name,
     var.image_tag,
   )
+
+  image_digest_ref = format(
+    "%s-docker.pkg.dev/%s/%s/%s@%s",
+    var.artifact_registry_location,
+    var.project_id,
+    var.platform_contract.artifact_registry_repo,
+    var.image_name,
+    local.image_digest_value,
+  )
+
+  image_ref = local.image_digest_value == "" ? local.image_tag_ref : local.image_digest_ref
 
   managed_labels = {
     "app.kubernetes.io/name"       = var.workload_name
