@@ -38,6 +38,11 @@ output "image_ref" {
   description = "Fully-qualified Artifact Registry image reference used by the workload."
 }
 
+output "image_digest" {
+  value       = var.image_digest
+  description = "Immutable digest used by the workload when digest deployment is enabled."
+}
+
 output "openfga_image" {
   value       = var.openfga_image
   description = "OpenFGA image used by the sidecar and migration init container."
@@ -71,6 +76,36 @@ output "app_config_map_name" {
 output "secret_provider_class_name" {
   value       = local.secret_provider_class_name
   description = "Platform-managed SecretProviderClass name when runtime secrets are configured."
+}
+
+output "health_check_path" {
+  value       = var.platform_contract.health_check_path
+  description = "HTTP path used by the app readiness and liveness probes."
+}
+
+output "data_mount_path" {
+  value       = var.data_mount_path
+  description = "Mount path for Freetool SQLite data inside the API container."
+}
+
+output "runtime_secrets_mount_path" {
+  value       = var.runtime_secrets_mount_path
+  description = "Mount path for platform-managed runtime secrets."
+}
+
+output "openfga_data_mount_path" {
+  value       = var.openfga_data_mount_path
+  description = "Mount path for OpenFGA SQLite data inside the OpenFGA containers."
+}
+
+output "sqlite_pvc_subpath" {
+  value       = var.sqlite_pvc_subpath
+  description = "PVC subpath used for Freetool SQLite files."
+}
+
+output "openfga_pvc_subpath" {
+  value       = var.openfga_pvc_subpath
+  description = "PVC subpath used for OpenFGA SQLite files."
 }
 
 output "state_bucket_name" {
