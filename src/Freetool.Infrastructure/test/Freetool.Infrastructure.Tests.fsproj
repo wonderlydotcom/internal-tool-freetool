@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="AppTelemetryTests.fs" />
+    <Compile Include="ExceptionHandlerMiddlewareTests.fs" />
     <Compile Include="DbContextConfigurationTests.fs" />
     <Compile Include="OpenFgaServiceTests.fs" />
     <Compile Include="OpenFgaStoreInitializationTests.fs" />
