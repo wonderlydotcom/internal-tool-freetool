@@ -121,9 +121,9 @@ module AppTelemetrySettings =
             .WithTracing(fun tracing ->
                 tracing
                     .AddSource(activitySourceName)
-                    .AddAspNetCoreInstrumentation()
+                    .AddAspNetCoreInstrumentation(fun options -> options.RecordException <- true)
                     .AddEntityFrameworkCoreInstrumentation()
-                    .AddHttpClientInstrumentation()
+                    .AddHttpClientInstrumentation(fun options -> options.RecordException <- true)
                 |> ignore
 
                 if settings.OtlpConfigured then

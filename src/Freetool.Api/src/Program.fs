@@ -590,6 +590,7 @@ let main args =
     app.UseStaticFiles(staticFileOptions) |> ignore
 
     // Use DevAuthMiddleware in dev mode; production always authenticates via Google IAP.
+    app.UseMiddleware<ExceptionHandlerMiddleware>() |> ignore
     if isDevMode then
         app.UseMiddleware<DevAuthMiddleware>() |> ignore
     else

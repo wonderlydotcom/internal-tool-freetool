@@ -39,6 +39,7 @@
     <Compile Include="src/Services/IdentityProvisioningService.fs" />
     <Compile Include="src/Services/OpenFgaDefaultMemberPermissionRepairService.fs" />
     <Compile Include="src/Middleware/IapAuthMiddleware.fs" />
+    <Compile Include="src/Middleware/ExceptionHandlerMiddleware.fs" />
     <Compile Include="src/Middleware/DevAuthMiddleware.fs" />
     <Compile Include="src/OpenApi/FSharpSchemaFilter.fs" />
     <Compile Include="src/Controllers/ResponseSanitizer.fs" />
