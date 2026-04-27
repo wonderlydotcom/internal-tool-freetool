@@ -544,17 +544,27 @@ function repoBranchKey(pair) {
   return `${pair.gitRoot}::${pair.branch}`;
 }
 
+const runtimeBackedEventTypes = new Set(["agent_end", "assistant_usage", "tool_call", "mcp_call", "skill_used", "turn_end"]);
+
+function preferRuntimeEventsOverSessionFallback(events) {
+  const sessionsWithRuntimeActions = new Set(
+    events
+      .filter((event) => event.sessionId && event.eventSource !== "pi-session" && runtimeBackedEventTypes.has(event.eventType))
+      .map((event) => event.sessionId)
+  );
+
+  return events.filter((event) => {
+    if (event.eventSource !== "pi-session") return true;
+    if (!runtimeBackedEventTypes.has(event.eventType)) return true;
+    return !sessionsWithRuntimeActions.has(event.sessionId);
+  });
+}
+
 function buildSummary({ repoRoot, branch, headSha, baseRef, events }) {
   const directlyAttributedEvents = events.filter((event) => eventTouchesRepoBranch(event, repoRoot, branch));
   const sessionIds = unique(directlyAttributedEvents.map((event) => event.sessionId));
   const sessionEvents = events.filter((event) => sessionIds.includes(event.sessionId));
-  const fullContextSessionIds = new Set(
-    sessionIds.filter((id) => sessionStartedOutsideRepo(sessionEvents.filter((event) => event.sessionId === id), repoRoot))
-  );
-  const currentEvents = dedupeEvents([
-    ...directlyAttributedEvents,
-    ...sessionEvents.filter((event) => fullContextSessionIds.has(event.sessionId)),
-  ]);
+  const currentEvents = preferRuntimeEventsOverSessionFallback(dedupeEvents(sessionEvents));
 
   const repoBranchPairs = unique(sessionEvents.flatMap((event) => eventRepoBranches(event).map(repoBranchKey)));
   const repos = unique(sessionEvents.flatMap(eventRepos));
@@ -571,20 +581,20 @@ function buildSummary({ repoRoot, branch, headSha, baseRef, events }) {
     if (event.eventType === "skill_used") increment(skillCounts, event.skillName);
     if (event.eventType === "mcp_call") increment(mcpCounts, `${event.server}.${event.tool}`);
   }
-  for (const event of sessionEvents) {
+  for (const event of currentEvents) {
     if (event.eventType === "mcp_call") increment(mcpSessionCounts, `${event.server}.${event.tool}`);
   }
 
   const repoUsage = sumUsage(currentEvents);
-  const sessionUsage = sumUsage(sessionEvents);
+  const sessionUsage = sumUsage(currentEvents);
   const repoAgentExchanges = countAgentExchanges(currentEvents);
-  const sessionAgentExchanges = countAgentExchanges(sessionEvents);
+  const sessionAgentExchanges = countAgentExchanges(currentEvents);
   const repoTurns = countTurns(currentEvents);
-  const sessionTurns = countTurns(sessionEvents);
+  const sessionTurns = countTurns(currentEvents);
   const repoContext = peakContext(currentEvents);
-  const sessionContext = peakContext(sessionEvents);
+  const sessionContext = peakContext(currentEvents);
   const repoCompactions = currentEvents.filter((event) => event.eventType === "compaction_end" && !event.aborted).length;
-  const sessionCompactions = sessionEvents.filter((event) => event.eventType === "compaction_end" && !event.aborted).length;
+  const sessionCompactions = repoCompactions;
   const hasRuntimeTelemetry = currentEvents.some((event) => event.eventSource !== "pi-session");
   const hasRuntimeActionTelemetry = currentEvents.some((event) => event.eventSource !== "pi-session" && ["agent_end", "assistant_usage", "tool_call", "mcp_call", "skill_used"].includes(event.eventType));
   const hasSessionTelemetry = currentEvents.some((event) => event.eventSource === "pi-session");
@@ -602,8 +612,10 @@ function buildSummary({ repoRoot, branch, headSha, baseRef, events }) {
           : "no-runtime-telemetry",
     confidence: hasRuntimeActionTelemetry ? "high" : hasSessionTelemetry || hasRuntimeTelemetry ? "medium" : "low",
     reposTouchedInSession: repos.length,
-    fullSessionContext: fullContextSessionIds.size > 0,
-    sessionsUsingFullContext: fullContextSessionIds.size,
+    fullSessionContext: sessionIds.length > 0,
+    sessionsUsingFullContext: sessionIds.length,
+    branchMatchedEvents: directlyAttributedEvents.length,
+    sessionEventsAttributed: currentEvents.length,
   };
 
   const json = {
@@ -627,6 +639,8 @@ function buildSummary({ repoRoot, branch, headSha, baseRef, events }) {
     `| Multi-branch session | ${classification.multiBranchSession ? "yes" : "no"} |\n` +
     `| Repositories touched in contributing sessions | ${classification.reposTouchedInSession} |\n` +
     `| Full-session context used | ${classification.fullSessionContext ? "yes" : "no"} |\n` +
+    `| Branch-matched events | ${formatNumber(classification.branchMatchedEvents)} |\n` +
+    `| Session events attributed | ${formatNumber(classification.sessionEventsAttributed)} |\n` +
     `| PR-attributed agent exchanges | ${formatNumber(repoAgentExchanges)} |\n` +
     `| Shared-session agent exchanges | ${formatNumber(sessionAgentExchanges)} |\n` +
     `| PR-attributed model turns | ${formatNumber(repoTurns)} |\n` +
@@ -644,7 +658,7 @@ function buildSummary({ repoRoot, branch, headSha, baseRef, events }) {
     `### Tools attributed to this PR\n\n| Tool | Calls |\n|---|---:|\n${tableRows(toolCounts)}\n\n` +
     `### Skills attributed to this PR\n\n| Skill | Loads |\n|---|---:|\n${tableRows(skillCounts)}\n\n` +
     `### MCP calls attributed to this PR\n\n| MCP tool | Calls |\n|---|---:|\n${tableRows(mcpCounts)}\n\n` +
-    `> Agent exchanges count completed user prompts/back-and-forths; model turns count LLM responses (one response plus any tool calls/results). Token and context attribution is exact for runtime telemetry events. When a contributing Pi session started outside this repo, the PR-attributed totals intentionally use the full session because that was the model context used to produce the PR. This duplicates shared-session totals across PRs from the same multi-repo session, but avoids pretending that shared context can be cleanly split per repo. When the exporter falls back to Pi session logs for a repo-started session, PR-attributed slices are heuristic based on repo/branch mentions in tool calls and results.\n`;
+    `> Agent exchanges count completed user prompts/back-and-forths; model turns count LLM responses (one response plus any tool calls/results). Token and context attribution is exact for runtime telemetry events. The branch slice is used only to discover contributing Pi session ids; once a session contributes to the PR, the report attributes the full contributing session to the PR so skills, MCP calls, tools, tokens, and context used during planning or branch setup are visible. This duplicates shared-session totals across PRs from the same multi-repo or multi-branch session, but avoids pretending that shared model context can be cleanly split per repo or branch. When the exporter falls back to Pi session logs, contributing sessions are still selected heuristically based on repo/branch mentions in tool calls and results.\n`;
 
   return { json, md };
 }
