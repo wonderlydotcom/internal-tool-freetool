@@ -66,7 +66,9 @@ function sumUsage(events) {
   const seen = new Set();
   for (const event of events) {
     if (event.eventType !== "assistant_usage" || !event.usage) continue;
-    const key = event.eventId || JSON.stringify(event.usage) + event.timestamp + event.sessionId;
+    const messageId = event.messageId || event.assistantMessageId;
+    const sessionKey = event.sessionId || event.sessionFile || event.cwd || "unknown-session";
+    const key = messageId ? `${sessionKey}:message:${messageId}` : event.eventId || JSON.stringify(event.usage) + event.timestamp + event.sessionId;
     if (seen.has(key)) continue;
     seen.add(key);
     totals.input += Number(event.usage.input ?? 0);
@@ -77,6 +79,48 @@ function sumUsage(events) {
     totals.cost += Number(event.usage.cost?.total ?? 0);
   }
   return totals;
+}
+
+function eventSessionKey(event) {
+  return event.sessionId || event.sessionFile || event.cwd || "unknown-session";
+}
+
+function turnIdentity(event) {
+  const sessionKey = eventSessionKey(event);
+  const messageId = event.messageId || event.assistantMessageId;
+  if (messageId) return `${sessionKey}:message:${messageId}`;
+  if (event.eventSource === "pi-session" && event.eventId) return String(event.eventId).replace(/:(assistant_usage|turn_end)$/, ":turn");
+  if (event.turnIndex !== undefined && event.timestamp) return `${sessionKey}:turn:${event.turnIndex}:${event.timestamp}`;
+  if (event.eventId) return `${event.eventSource ?? "runtime"}:${event.eventId}`;
+  return `${event.eventType}:${sessionKey}:${event.timestamp ?? ""}:${event.provider ?? ""}:${event.model ?? ""}:${JSON.stringify(event.usage ?? {})}`;
+}
+
+function countTurns(events) {
+  const bySession = new Map();
+  for (const event of events) {
+    if (event.eventType !== "turn_end" && event.eventType !== "assistant_usage") continue;
+    const key = eventSessionKey(event);
+    if (!bySession.has(key)) bySession.set(key, { turnEnds: [], assistantUsages: [] });
+    const bucket = bySession.get(key);
+    if (event.eventType === "turn_end") bucket.turnEnds.push(event);
+    else bucket.assistantUsages.push(event);
+  }
+
+  let total = 0;
+  for (const bucket of bySession.values()) {
+    // Prefer explicit turn_end telemetry when present. Older telemetry can still
+    // be counted from assistant_usage events, and synthesized pi-session turn_end
+    // events cover historic sessions when session scanning is enabled.
+    const source = bucket.turnEnds.length > 0 ? bucket.turnEnds : bucket.assistantUsages;
+    const seen = new Set();
+    for (const event of source) {
+      const key = turnIdentity(event);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      total += 1;
+    }
+  }
+  return total;
 }
 
 function peakContext(events) {
@@ -265,6 +309,7 @@ function synthesizeEventsFromSessionFile(sessionPath, repoInfos, targetBranch, c
     repoBranches: repoBranches([...sessionRoots], targetBranch),
   }];
 
+  let turnIndex = 0;
   for (const entry of entries) {
     const message = entry.message;
     if (entry.type !== "message" || message?.role !== "assistant") continue;
@@ -311,6 +356,26 @@ function synthesizeEventsFromSessionFile(sessionPath, repoInfos, targetBranch, c
       }
     }
 
+    const currentTurnIndex = turnIndex;
+    turnIndex += 1;
+    const touchedGitRoots = [...turnRoots];
+    const branchPairs = repoBranches(touchedGitRoots, targetBranch);
+
+    events.push({
+      eventSource: "pi-session",
+      eventId: `${sessionPath}:${entry.id}:turn_end`,
+      timestamp: entry.timestamp,
+      sessionId,
+      sessionFile: sessionPath,
+      cwd: sessionCwd,
+      eventType: "turn_end",
+      turnIndex: currentTurnIndex,
+      messageId: entry.id,
+      toolCallCount: toolCalls.length,
+      touchedGitRoots,
+      repoBranches: branchPairs,
+    });
+
     events.push({
       eventSource: "pi-session",
       eventId: `${sessionPath}:${entry.id}:assistant_usage`,
@@ -319,11 +384,13 @@ function synthesizeEventsFromSessionFile(sessionPath, repoInfos, targetBranch, c
       sessionFile: sessionPath,
       cwd: sessionCwd,
       eventType: "assistant_usage",
+      turnIndex: currentTurnIndex,
+      messageId: entry.id,
       provider: message.provider,
       model: message.model,
       usage: message.usage,
-      touchedGitRoots: [...turnRoots],
-      repoBranches: repoBranches([...turnRoots], targetBranch),
+      touchedGitRoots,
+      repoBranches: branchPairs,
     });
   }
 
@@ -409,6 +476,8 @@ function buildSummary({ repoRoot, branch, headSha, baseRef, events }) {
 
   const repoUsage = sumUsage(currentEvents);
   const sessionUsage = sumUsage(sessionEvents);
+  const repoTurns = countTurns(currentEvents);
+  const sessionTurns = countTurns(sessionEvents);
   const repoContext = peakContext(currentEvents);
   const sessionContext = peakContext(sessionEvents);
   const repoCompactions = currentEvents.filter((event) => event.eventType === "compaction_end" && !event.aborted).length;
@@ -440,6 +509,7 @@ function buildSummary({ repoRoot, branch, headSha, baseRef, events }) {
     tools: Object.fromEntries(toolCounts),
     skills: Object.fromEntries(skillCounts),
     mcp: { prAttributed: Object.fromEntries(mcpCounts), sessionTotal: Object.fromEntries(mcpSessionCounts) },
+    turns: { prAttributed: repoTurns, sharedSessionTotal: sessionTurns },
     tokens: { prAttributed: repoUsage, sharedSessionTotal: sessionUsage },
     context: { prAttributed: repoContext, sharedSessionTotal: sessionContext },
     compactions: { prAttributed: repoCompactions, sharedSessionTotal: sessionCompactions },
@@ -453,6 +523,8 @@ function buildSummary({ repoRoot, branch, headSha, baseRef, events }) {
     `| Multi-branch session | ${classification.multiBranchSession ? "yes" : "no"} |\n` +
     `| Repositories touched in contributing sessions | ${classification.reposTouchedInSession} |\n` +
     `| Full-session context used | ${classification.fullSessionContext ? "yes" : "no"} |\n` +
+    `| PR-attributed model turns | ${formatNumber(repoTurns)} |\n` +
+    `| Shared-session model turns | ${formatNumber(sessionTurns)} |\n` +
     `| PR-attributed input tokens | ${formatNumber(repoUsage.input)} |\n` +
     `| PR-attributed cached tokens read | ${formatNumber(repoUsage.cacheRead)} |\n` +
     `| PR-attributed output tokens | ${formatNumber(repoUsage.output)} |\n` +
@@ -466,7 +538,7 @@ function buildSummary({ repoRoot, branch, headSha, baseRef, events }) {
     `### Tools attributed to this PR\n\n| Tool | Calls |\n|---|---:|\n${tableRows(toolCounts)}\n\n` +
     `### Skills attributed to this PR\n\n| Skill | Loads |\n|---|---:|\n${tableRows(skillCounts)}\n\n` +
     `### MCP calls attributed to this PR\n\n| MCP tool | Calls |\n|---|---:|\n${tableRows(mcpCounts)}\n\n` +
-    `> Token and context attribution is exact for runtime telemetry events. When a contributing Pi session started outside this repo, the PR-attributed totals intentionally use the full session because that was the model context used to produce the PR. This duplicates shared-session totals across PRs from the same multi-repo session, but avoids pretending that shared context can be cleanly split per repo. When the exporter falls back to Pi session logs for a repo-started session, PR-attributed slices are heuristic based on repo/branch mentions in tool calls and results.\n`;
+    `> Model turns count LLM responses (one response plus any tool calls/results), not just user prompts. Token and context attribution is exact for runtime telemetry events. When a contributing Pi session started outside this repo, the PR-attributed totals intentionally use the full session because that was the model context used to produce the PR. This duplicates shared-session totals across PRs from the same multi-repo session, but avoids pretending that shared context can be cleanly split per repo. When the exporter falls back to Pi session logs for a repo-started session, PR-attributed slices are heuristic based on repo/branch mentions in tool calls and results.\n`;
 
   return { json, md };
 }
