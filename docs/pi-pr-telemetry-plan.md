@@ -107,7 +107,7 @@ The exporter reads, in order:
 2. `~/.pi/agent/pr-telemetry/events.jsonl`
 3. Pi session logs under `~/.pi/agent/sessions/` as a fallback
 
-It slices events for the current repo/branch, then compares contributing session ids against all events in those sessions. If a contributing Pi session started outside the repo folder, the exporter treats the whole session as the PR context because that is the context the model used while producing the PR. `signoff-pr.sh` passes a cutoff timestamp to keep later Pi activity from changing the summary when old branches are re-summarized.
+It slices events for the current repo/branch only to discover the Pi session ids that contributed to the PR, then attributes all events from those contributing sessions to the PR. This means skills, MCP calls, tools, tokens, and context used during planning, default-branch prep, or branch setup remain visible in the PR report even if those individual events happened before the feature branch existed. When runtime telemetry and session-log fallback events both describe the same session actions, runtime telemetry is preferred to avoid double-counting. `signoff-pr.sh` passes a cutoff timestamp to keep later Pi activity from changing the summary when old branches are re-summarized.
 
 ## Classification
 
@@ -131,9 +131,9 @@ Reports include method/confidence fields, for example:
 
 ## Token/context interpretation
 
-Context-window usage is a property of the whole Pi session. In multi-repo flows, the report includes both:
+Context-window usage is a property of the whole Pi session. The report includes both:
 
-- PR-attributed repo/branch slice
+- PR-attributed contributing-session total
 - shared contributing-session total
 
-The shared-session total is the authoritative cost/context figure. When a contributing session started outside the repo folder, the PR-attributed totals intentionally equal the full session totals; this duplicates cost/context across PRs from the same multi-repo session, but it is more honest than pretending the shared model context can be cleanly split by repository. For repo-started session-log fallback summaries, PR-attributed slices remain heuristic based on repo/branch mentions in tool calls and results.
+Those totals intentionally match for contributing sessions: once any event in a session is tied to the PR branch, the full session is attributed to the PR. This duplicates cost/context across PRs from the same multi-repo or multi-branch session, but it is more honest than pretending shared model context can be cleanly split by repository or branch. For session-log fallback summaries, contributing sessions are selected heuristically based on repo/branch mentions in tool calls and results.
