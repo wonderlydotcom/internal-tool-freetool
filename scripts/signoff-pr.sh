@@ -440,6 +440,80 @@ ensure_pull_request() {
   gh pr create --head "$branch" --base "$DEFAULT_BRANCH" --fill
 }
 
+export_pi_pr_telemetry() {
+  if [ ! -f "$ROOT_DIR/scripts/pi-pr-telemetry.mjs" ]; then
+    echo "Pi PR telemetry exporter not found; skipping telemetry summary."
+    return
+  fi
+
+  if ! command -v node >/dev/null 2>&1; then
+    echo "Node.js not found; skipping Pi PR telemetry summary."
+    return
+  fi
+
+  local base_ref="${1:-${DIFF_BASE_REF:-${BASE_REF:-}}}"
+
+  if ! node "$ROOT_DIR/scripts/pi-pr-telemetry.mjs" summarize \
+    --repo "$ROOT_DIR" \
+    --branch "$(git branch --show-current)" \
+    --base "$base_ref" \
+    --head "$(git rev-parse HEAD)" \
+    --out-json "$ROOT_DIR/.pi/pr-telemetry-summary.json" \
+    --out-md "$ROOT_DIR/.pi/pr-telemetry-summary.md"; then
+    echo "Pi PR telemetry summary failed; continuing without telemetry comment."
+    return
+  fi
+
+  if ! publish_pi_pr_telemetry_comment "$ROOT_DIR/.pi/pr-telemetry-summary.md"; then
+    echo "Pi PR telemetry comment failed; continuing with signoff."
+  fi
+}
+
+publish_pi_pr_telemetry_comment() {
+  local summary_path="$1"
+  local marker='<!-- pi-pr-telemetry -->'
+  local branch pr_number repo_name comment_body existing_comment_id
+
+  if [ ! -s "$summary_path" ]; then
+    echo "Pi PR telemetry summary was not produced; skipping PR comment."
+    return
+  fi
+
+  branch="$(git branch --show-current)"
+  pr_number="$(gh pr view "$branch" --json number --jq '.number' 2>/dev/null || true)"
+  if [ -z "$pr_number" ] || [ "$pr_number" = "null" ]; then
+    echo "Could not resolve current pull request number; skipping Pi telemetry PR comment."
+    return
+  fi
+
+  repo_name="$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)"
+  if [ -z "$repo_name" ] || [ "$repo_name" = "null" ]; then
+    echo "Could not resolve GitHub repository; skipping Pi telemetry PR comment."
+    return
+  fi
+
+  comment_body="$(printf '%s\n\n%s\n' "$marker" "$(cat "$summary_path")")"
+
+  existing_comment_id="$(gh api --paginate "repos/$repo_name/issues/$pr_number/comments" \
+    --jq ".[] | select(.body | contains(\"$marker\")) | .id" 2>/dev/null \
+    | tail -n 1 || true)"
+
+  if [ -n "$existing_comment_id" ]; then
+    if ! gh api --method PATCH "repos/$repo_name/issues/comments/$existing_comment_id" -f body="$comment_body" >/dev/null; then
+      echo "Could not update Pi PR telemetry comment on #$pr_number."
+      return
+    fi
+    echo "Updated Pi PR telemetry comment on #$pr_number."
+    return
+  fi
+
+  if ! gh api --method POST "repos/$repo_name/issues/$pr_number/comments" -f body="$comment_body" >/dev/null; then
+    echo "Could not create Pi PR telemetry comment on #$pr_number."
+    return
+  fi
+  echo "Created Pi PR telemetry comment on #$pr_number."
+}
+
 DEFAULT_BRANCH="$(resolve_default_branch)"
 DIFF_BASE_REF="$(resolve_diff_base_ref)"
 SOLUTION_FILE="$(resolve_solution_file)"
@@ -626,6 +700,7 @@ fi
 ensure_tracked_status_unchanged "$VALIDATION_TRACKED_STATUS"
 ensure_upstream_tracking
 ensure_pull_request
+run_step "Exporting Pi PR telemetry summary" export_pi_pr_telemetry
 
 echo "Signing off PR with gh-signoff..."
 if [ "$#" -gt 0 ]; then
