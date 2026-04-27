@@ -68,7 +68,8 @@ function sumUsage(events) {
     if (event.eventType !== "assistant_usage" || !event.usage) continue;
     const messageId = event.messageId || event.assistantMessageId;
     const sessionKey = event.sessionId || event.sessionFile || event.cwd || "unknown-session";
-    const key = messageId ? `${sessionKey}:message:${messageId}` : event.eventId || JSON.stringify(event.usage) + event.timestamp + event.sessionId;
+    const agentTurnKey = event.agentIndex !== undefined && event.turnIndex !== undefined ? `${sessionKey}:agent:${event.agentIndex}:turn:${event.turnIndex}` : undefined;
+    const key = agentTurnKey || (messageId ? `${sessionKey}:message:${messageId}` : event.eventId || JSON.stringify(event.usage) + event.timestamp + event.sessionId);
     if (seen.has(key)) continue;
     seen.add(key);
     totals.input += Number(event.usage.input ?? 0);
@@ -87,6 +88,8 @@ function eventSessionKey(event) {
 
 function turnIdentity(event) {
   const sessionKey = eventSessionKey(event);
+  const agentIndex = event.agentIndex;
+  if (agentIndex !== undefined && event.turnIndex !== undefined) return `${sessionKey}:agent:${agentIndex}:turn:${event.turnIndex}`;
   const messageId = event.messageId || event.assistantMessageId;
   if (messageId) return `${sessionKey}:message:${messageId}`;
   if (event.eventSource === "pi-session" && event.eventId) return String(event.eventId).replace(/:(assistant_usage|turn_end)$/, ":turn");
@@ -119,6 +122,34 @@ function countTurns(events) {
       seen.add(key);
       total += 1;
     }
+  }
+  return total;
+}
+
+function agentExchangeIdentity(event) {
+  const sessionKey = eventSessionKey(event);
+  if (event.agentIndex !== undefined) return `${sessionKey}:agent:${event.agentIndex}`;
+  const userMessageIds = Array.isArray(event.userMessageIds) ? event.userMessageIds : [];
+  const messageIds = Array.isArray(event.messageIds) ? event.messageIds : [];
+  const userMessageId = event.userMessageId || event.firstUserMessageId || userMessageIds[0];
+  if (userMessageId) return `${sessionKey}:agent:${userMessageId}`;
+  const firstMessageId = event.firstMessageId || messageIds[0];
+  const lastMessageId = event.lastMessageId || messageIds[messageIds.length - 1];
+  if (firstMessageId || lastMessageId) return `${sessionKey}:agent:${firstMessageId ?? ""}:${lastMessageId ?? ""}`;
+  if (event.agentIndex !== undefined && event.timestamp) return `${sessionKey}:agent:${event.agentIndex}:${event.timestamp}`;
+  if (event.eventId) return `${event.eventSource ?? "runtime"}:${event.eventId}`;
+  return `${event.eventType}:${sessionKey}:${event.timestamp ?? ""}:${event.messageCount ?? ""}:${event.assistantMessageCount ?? ""}`;
+}
+
+function countAgentExchanges(events) {
+  const seen = new Set();
+  let total = 0;
+  for (const event of events) {
+    if (event.eventType !== "agent_end") continue;
+    const key = agentExchangeIdentity(event);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    total += 1;
   }
   return total;
 }
@@ -309,10 +340,76 @@ function synthesizeEventsFromSessionFile(sessionPath, repoInfos, targetBranch, c
     repoBranches: repoBranches([...sessionRoots], targetBranch),
   }];
 
-  let turnIndex = 0;
+  const assistantTurnMetadata = new Map();
+
+  const agentRuns = [];
+  let currentAgentRun;
+  for (const entry of entries) {
+    const message = entry.message;
+    if (entry.type === "message" && message?.role === "user") {
+      if (currentAgentRun) agentRuns.push(currentAgentRun);
+      currentAgentRun = { userEntry: entry, entries: [entry] };
+      continue;
+    }
+    if (currentAgentRun && entry.type === "message") currentAgentRun.entries.push(entry);
+  }
+  if (currentAgentRun) agentRuns.push(currentAgentRun);
+
+  let agentIndex = 0;
+  for (const run of agentRuns) {
+    const messages = run.entries.filter((entry) => entry.type === "message" && entry.message);
+    const assistantMessages = messages.filter((entry) => entry.message?.role === "assistant");
+    if (assistantMessages.length === 0) continue;
+    assistantMessages.forEach((entry, turnIndex) => {
+      assistantTurnMetadata.set(entry.id, { agentIndex, turnIndex });
+    });
+
+    const toolResultMessages = messages.filter((entry) => entry.message?.role === "toolResult");
+    const agentRoots = new Set(extractRepoMentions(messages.map(signalTextForEntry).join("\n"), repoInfos));
+    for (const entry of assistantMessages) {
+      const toolCalls = (entry.message?.content ?? []).filter((item) => item?.type === "toolCall");
+      for (const toolCall of toolCalls) {
+        const toolText = JSON.stringify({ name: toolCall.name, arguments: toolCall.arguments ?? {} });
+        for (const root of extractRepoMentions(toolText, repoInfos)) agentRoots.add(root);
+        for (const root of toolResultRoots.get(toolCall.id) ?? []) agentRoots.add(root);
+      }
+    }
+
+    const touchedGitRoots = [...agentRoots];
+    const branchPairs = repoBranches(touchedGitRoots, targetBranch);
+    const lastEntry = messages[messages.length - 1];
+    events.push({
+      eventSource: "pi-session",
+      eventId: `${sessionPath}:${run.userEntry.id}:agent_end`,
+      timestamp: lastEntry?.timestamp ?? run.userEntry.timestamp,
+      sessionId,
+      sessionFile: sessionPath,
+      cwd: sessionCwd,
+      eventType: "agent_end",
+      agentIndex,
+      userMessageId: run.userEntry.id,
+      firstMessageId: messages[0]?.id,
+      lastMessageId: lastEntry?.id,
+      messageCount: messages.length,
+      userMessageCount: messages.filter((entry) => entry.message?.role === "user").length,
+      assistantMessageCount: assistantMessages.length,
+      toolResultMessageCount: toolResultMessages.length,
+      turnCount: assistantMessages.length,
+      touchedGitRoots,
+      repoBranches: branchPairs,
+    });
+    agentIndex += 1;
+  }
+
+  let fallbackTurnIndex = 0;
   for (const entry of entries) {
     const message = entry.message;
     if (entry.type !== "message" || message?.role !== "assistant") continue;
+
+    const turnMetadata = assistantTurnMetadata.get(entry.id);
+    const currentAgentIndex = turnMetadata?.agentIndex;
+    const currentTurnIndex = turnMetadata?.turnIndex ?? fallbackTurnIndex;
+    if (!turnMetadata) fallbackTurnIndex += 1;
 
     const turnRoots = new Set(extractRepoMentions(contentText(message.content), repoInfos));
     const toolCalls = (message.content ?? []).filter((item) => item?.type === "toolCall");
@@ -332,6 +429,8 @@ function synthesizeEventsFromSessionFile(sessionPath, repoInfos, targetBranch, c
         sessionFile: sessionPath,
         cwd: sessionCwd,
         eventType: "tool_call",
+        agentIndex: currentAgentIndex,
+        turnIndex: currentTurnIndex,
         toolName: toolCall.name,
         toolCallId: toolCall.id,
         touchedGitRoots,
@@ -348,6 +447,8 @@ function synthesizeEventsFromSessionFile(sessionPath, repoInfos, targetBranch, c
           sessionFile: sessionPath,
           cwd: sessionCwd,
           eventType: "mcp_call",
+          agentIndex: currentAgentIndex,
+          turnIndex: currentTurnIndex,
           server: mcp.server,
           tool: mcp.tool,
           touchedGitRoots,
@@ -356,8 +457,6 @@ function synthesizeEventsFromSessionFile(sessionPath, repoInfos, targetBranch, c
       }
     }
 
-    const currentTurnIndex = turnIndex;
-    turnIndex += 1;
     const touchedGitRoots = [...turnRoots];
     const branchPairs = repoBranches(touchedGitRoots, targetBranch);
 
@@ -369,6 +468,7 @@ function synthesizeEventsFromSessionFile(sessionPath, repoInfos, targetBranch, c
       sessionFile: sessionPath,
       cwd: sessionCwd,
       eventType: "turn_end",
+      agentIndex: currentAgentIndex,
       turnIndex: currentTurnIndex,
       messageId: entry.id,
       toolCallCount: toolCalls.length,
@@ -384,6 +484,7 @@ function synthesizeEventsFromSessionFile(sessionPath, repoInfos, targetBranch, c
       sessionFile: sessionPath,
       cwd: sessionCwd,
       eventType: "assistant_usage",
+      agentIndex: currentAgentIndex,
       turnIndex: currentTurnIndex,
       messageId: entry.id,
       provider: message.provider,
@@ -476,6 +577,8 @@ function buildSummary({ repoRoot, branch, headSha, baseRef, events }) {
 
   const repoUsage = sumUsage(currentEvents);
   const sessionUsage = sumUsage(sessionEvents);
+  const repoAgentExchanges = countAgentExchanges(currentEvents);
+  const sessionAgentExchanges = countAgentExchanges(sessionEvents);
   const repoTurns = countTurns(currentEvents);
   const sessionTurns = countTurns(sessionEvents);
   const repoContext = peakContext(currentEvents);
@@ -483,7 +586,7 @@ function buildSummary({ repoRoot, branch, headSha, baseRef, events }) {
   const repoCompactions = currentEvents.filter((event) => event.eventType === "compaction_end" && !event.aborted).length;
   const sessionCompactions = sessionEvents.filter((event) => event.eventType === "compaction_end" && !event.aborted).length;
   const hasRuntimeTelemetry = currentEvents.some((event) => event.eventSource !== "pi-session");
-  const hasRuntimeActionTelemetry = currentEvents.some((event) => event.eventSource !== "pi-session" && ["assistant_usage", "tool_call", "mcp_call", "skill_used"].includes(event.eventType));
+  const hasRuntimeActionTelemetry = currentEvents.some((event) => event.eventSource !== "pi-session" && ["agent_end", "assistant_usage", "tool_call", "mcp_call", "skill_used"].includes(event.eventType));
   const hasSessionTelemetry = currentEvents.some((event) => event.eventSource === "pi-session");
 
   const classification = {
@@ -509,6 +612,7 @@ function buildSummary({ repoRoot, branch, headSha, baseRef, events }) {
     tools: Object.fromEntries(toolCounts),
     skills: Object.fromEntries(skillCounts),
     mcp: { prAttributed: Object.fromEntries(mcpCounts), sessionTotal: Object.fromEntries(mcpSessionCounts) },
+    agentExchanges: { prAttributed: repoAgentExchanges, sharedSessionTotal: sessionAgentExchanges },
     turns: { prAttributed: repoTurns, sharedSessionTotal: sessionTurns },
     tokens: { prAttributed: repoUsage, sharedSessionTotal: sessionUsage },
     context: { prAttributed: repoContext, sharedSessionTotal: sessionContext },
@@ -523,6 +627,8 @@ function buildSummary({ repoRoot, branch, headSha, baseRef, events }) {
     `| Multi-branch session | ${classification.multiBranchSession ? "yes" : "no"} |\n` +
     `| Repositories touched in contributing sessions | ${classification.reposTouchedInSession} |\n` +
     `| Full-session context used | ${classification.fullSessionContext ? "yes" : "no"} |\n` +
+    `| PR-attributed agent exchanges | ${formatNumber(repoAgentExchanges)} |\n` +
+    `| Shared-session agent exchanges | ${formatNumber(sessionAgentExchanges)} |\n` +
     `| PR-attributed model turns | ${formatNumber(repoTurns)} |\n` +
     `| Shared-session model turns | ${formatNumber(sessionTurns)} |\n` +
     `| PR-attributed input tokens | ${formatNumber(repoUsage.input)} |\n` +
@@ -538,7 +644,7 @@ function buildSummary({ repoRoot, branch, headSha, baseRef, events }) {
     `### Tools attributed to this PR\n\n| Tool | Calls |\n|---|---:|\n${tableRows(toolCounts)}\n\n` +
     `### Skills attributed to this PR\n\n| Skill | Loads |\n|---|---:|\n${tableRows(skillCounts)}\n\n` +
     `### MCP calls attributed to this PR\n\n| MCP tool | Calls |\n|---|---:|\n${tableRows(mcpCounts)}\n\n` +
-    `> Model turns count LLM responses (one response plus any tool calls/results), not just user prompts. Token and context attribution is exact for runtime telemetry events. When a contributing Pi session started outside this repo, the PR-attributed totals intentionally use the full session because that was the model context used to produce the PR. This duplicates shared-session totals across PRs from the same multi-repo session, but avoids pretending that shared context can be cleanly split per repo. When the exporter falls back to Pi session logs for a repo-started session, PR-attributed slices are heuristic based on repo/branch mentions in tool calls and results.\n`;
+    `> Agent exchanges count completed user prompts/back-and-forths; model turns count LLM responses (one response plus any tool calls/results). Token and context attribution is exact for runtime telemetry events. When a contributing Pi session started outside this repo, the PR-attributed totals intentionally use the full session because that was the model context used to produce the PR. This duplicates shared-session totals across PRs from the same multi-repo session, but avoids pretending that shared context can be cleanly split per repo. When the exporter falls back to Pi session logs for a repo-started session, PR-attributed slices are heuristic based on repo/branch mentions in tool calls and results.\n`;
 
   return { json, md };
 }
