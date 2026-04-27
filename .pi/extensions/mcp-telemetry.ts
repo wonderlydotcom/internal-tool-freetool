@@ -3,6 +3,8 @@ import { Type } from "typebox";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 
 // Project-local Pi extension that provides two capabilities:
 // 1. A small MCP-over-HTTP bridge for servers declared in .mcp.json.
@@ -35,6 +37,7 @@ type GitSnapshot = {
 };
 
 type EventBase = {
+  eventId?: string;
   timestamp: string;
   sessionId?: string;
   sessionFile?: string;
@@ -46,6 +49,7 @@ const gitCache = new Map<string, { expiresAt: number; snapshot: GitSnapshot }>()
 const mcpSessionIds = new Map<string, string>();
 const initializedServers = new Set<string>();
 let telemetryPath: string | undefined;
+let globalTelemetryPath: string | undefined;
 let sessionId: string | undefined;
 let sessionFile: string | undefined;
 let loadedMcpConfig: McpConfig = {};
@@ -87,6 +91,13 @@ function ensureTelemetryPath(cwd: string): string | undefined {
   return telemetryPath;
 }
 
+function ensureGlobalTelemetryPath(): string {
+  if (globalTelemetryPath) return globalTelemetryPath;
+  globalTelemetryPath = join(process.env.PI_PR_TELEMETRY_DIR ?? join(homedir(), ".pi", "agent", "pr-telemetry"), "events.jsonl");
+  mkdirSync(dirname(globalTelemetryPath), { recursive: true });
+  return globalTelemetryPath;
+}
+
 function redactToolArgs(toolName: string, args: any): Record<string, unknown> {
   if (!args || typeof args !== "object") return {};
   if (toolName === "read") return { path: args.path };
@@ -122,18 +133,22 @@ function skillNameFromPath(pathValue: string): string | undefined {
 
 function record(ctx: ExtensionContext | { cwd: string; sessionManager?: any } | undefined, event: Record<string, unknown>) {
   const cwd = ctx?.cwd ?? process.cwd();
-  const path = ensureTelemetryPath(cwd);
-  if (!path) return;
+  const repoPath = ensureTelemetryPath(cwd);
+  const globalPath = ensureGlobalTelemetryPath();
 
   const sm = (ctx as any)?.sessionManager;
   const base: EventBase = {
+    eventId: randomUUID(),
     timestamp: new Date().toISOString(),
     sessionId: sessionId ?? sm?.getSessionId?.(),
     sessionFile: sessionFile ?? sm?.getSessionFile?.(),
     eventType: String(event.eventType ?? "unknown"),
     ...getGitSnapshot(cwd),
   };
-  appendFileSync(path, JSON.stringify({ ...base, ...event }) + "\n");
+  const payload = JSON.stringify({ ...base, ...event }) + "\n";
+  for (const path of [...new Set([repoPath, globalPath].filter(Boolean) as string[])]) {
+    appendFileSync(path, payload);
+  }
 }
 
 function loadMcpConfig(cwd: string): McpConfig {
