@@ -304,7 +304,7 @@ export default async function (pi: ExtensionAPI) {
     record(ctx, {
       eventType: "session_start",
       mcpServersConfigured: Object.keys(loadedMcpConfig.mcpServers ?? {}),
-      telemetryVersion: 1,
+      telemetryVersion: 2,
     });
   });
 
@@ -346,20 +346,38 @@ export default async function (pi: ExtensionAPI) {
 
   pi.on("message_end", async (event, ctx) => {
     if (event.message.role !== "assistant") return;
-    const usage = (event.message as any).usage;
+    const message = event.message as any;
+    const usage = message.usage;
     const context = ctx.getContextUsage?.();
     record(ctx, {
       eventType: "assistant_usage",
-      provider: (event.message as any).provider,
-      model: (event.message as any).model,
+      messageId: message.id,
+      provider: message.provider,
+      model: message.model,
       usage,
       context,
     });
   });
 
-  pi.on("turn_end", async (_event, ctx) => {
+  pi.on("turn_end", async (event, ctx) => {
+    const message = event.message as any;
+    const toolResults = Array.isArray(event.toolResults) ? event.toolResults : [];
     const context = ctx.getContextUsage?.();
-    if (context) record(ctx, { eventType: "context_usage", context });
+    record(ctx, {
+      eventType: "turn_end",
+      turnIndex: event.turnIndex,
+      messageId: message?.id,
+      toolResultCount: toolResults.length,
+      context,
+    });
+    if (context) {
+      record(ctx, {
+        eventType: "context_usage",
+        turnIndex: event.turnIndex,
+        messageId: message?.id,
+        context,
+      });
+    }
   });
 
   pi.on("compaction_start", async (event, ctx) => {
