@@ -52,6 +52,9 @@ let telemetryPath: string | undefined;
 let globalTelemetryPath: string | undefined;
 let sessionId: string | undefined;
 let sessionFile: string | undefined;
+let nextAgentIndex = 0;
+let activeAgentIndex: number | undefined;
+let activeTurnIndex: number | undefined;
 let loadedMcpConfig: McpConfig = {};
 
 function runGit(cwd: string, args: string[]): string | undefined {
@@ -300,11 +303,14 @@ export default async function (pi: ExtensionAPI) {
     sessionId = ctx.sessionManager.getSessionId?.();
     sessionFile = ctx.sessionManager.getSessionFile?.();
     telemetryPath = undefined;
+    nextAgentIndex = 0;
+    activeAgentIndex = undefined;
+    activeTurnIndex = undefined;
     loadedMcpConfig = loadMcpConfig(ctx.cwd);
     record(ctx, {
       eventType: "session_start",
       mcpServersConfigured: Object.keys(loadedMcpConfig.mcpServers ?? {}),
-      telemetryVersion: 2,
+      telemetryVersion: 3,
     });
   });
 
@@ -322,6 +328,12 @@ export default async function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
     const skills = event.systemPromptOptions?.skills?.map((skill: any) => skill.name).filter(Boolean) ?? [];
     record(ctx, { eventType: "before_agent_start", availableSkills: skills });
+  });
+
+  pi.on("agent_start", async (_event, ctx) => {
+    activeAgentIndex = nextAgentIndex;
+    activeTurnIndex = undefined;
+    record(ctx, { eventType: "agent_start", agentIndex: activeAgentIndex });
   });
 
   pi.on("tool_call", async (event, ctx) => {
@@ -344,6 +356,10 @@ export default async function (pi: ExtensionAPI) {
     record(ctx, { eventType: "tool_execution_end", toolName: event.toolName, toolCallId: event.toolCallId, isError: event.isError });
   });
 
+  pi.on("turn_start", async (event) => {
+    activeTurnIndex = event.turnIndex;
+  });
+
   pi.on("message_end", async (event, ctx) => {
     if (event.message.role !== "assistant") return;
     const message = event.message as any;
@@ -351,6 +367,8 @@ export default async function (pi: ExtensionAPI) {
     const context = ctx.getContextUsage?.();
     record(ctx, {
       eventType: "assistant_usage",
+      agentIndex: activeAgentIndex,
+      turnIndex: activeTurnIndex,
       messageId: message.id,
       provider: message.provider,
       model: message.model,
@@ -365,6 +383,7 @@ export default async function (pi: ExtensionAPI) {
     const context = ctx.getContextUsage?.();
     record(ctx, {
       eventType: "turn_end",
+      agentIndex: activeAgentIndex,
       turnIndex: event.turnIndex,
       messageId: message?.id,
       toolResultCount: toolResults.length,
@@ -373,11 +392,37 @@ export default async function (pi: ExtensionAPI) {
     if (context) {
       record(ctx, {
         eventType: "context_usage",
+        agentIndex: activeAgentIndex,
         turnIndex: event.turnIndex,
         messageId: message?.id,
         context,
       });
     }
+  });
+
+  pi.on("agent_end", async (event, ctx) => {
+    const agentIndex = activeAgentIndex ?? nextAgentIndex;
+    const messages = Array.isArray(event.messages) ? event.messages as any[] : [];
+    const messagesForRole = (role: string) => messages.filter((message) => message?.role === role);
+    const idsForRole = (role: string) => messagesForRole(role).map((message) => message?.id).filter(Boolean);
+    const messageIds = messages.map((message) => message?.id).filter(Boolean);
+    record(ctx, {
+      eventType: "agent_end",
+      agentIndex,
+      messageCount: messages.length,
+      userMessageCount: messagesForRole("user").length,
+      assistantMessageCount: messagesForRole("assistant").length,
+      toolResultMessageCount: messagesForRole("toolResult").length,
+      turnCount: messagesForRole("assistant").length,
+      firstMessageId: messageIds[0],
+      lastMessageId: messageIds.at(-1),
+      userMessageIds: idsForRole("user"),
+      assistantMessageIds: idsForRole("assistant"),
+      messageIds,
+    });
+    nextAgentIndex = Math.max(nextAgentIndex, agentIndex + 1);
+    activeAgentIndex = undefined;
+    activeTurnIndex = undefined;
   });
 
   pi.on("compaction_start", async (event, ctx) => {
