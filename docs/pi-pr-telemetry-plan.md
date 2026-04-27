@@ -20,13 +20,19 @@ The project-local Pi extension lives at:
 .pi/extensions/mcp-telemetry.ts
 ```
 
-It records lightweight JSONL events to:
+It records lightweight JSONL events to the repo-local stream:
 
 ```text
 .git/pi-telemetry/events.jsonl
 ```
 
-The event stream intentionally stays local and is not committed. Each event includes attribution metadata captured at runtime:
+and mirrors the same aggregate events to a user-local stream:
+
+```text
+~/.pi/agent/pr-telemetry/events.jsonl
+```
+
+Both event streams intentionally stay local and are not committed. Each event includes attribution metadata captured at runtime:
 
 - timestamp
 - Pi session id
@@ -39,7 +45,7 @@ The event stream intentionally stays local and is not committed. Each event incl
 - tool/skill/MCP metadata when applicable
 - assistant usage and context metadata when available
 
-Runtime git metadata is required so `signoff-pr.sh` can deterministically classify multi-repo and multi-branch sessions later. Without this runtime telemetry, classification would be heuristic only.
+Runtime git metadata lets `signoff-pr.sh` deterministically classify multi-repo and multi-branch sessions later. When runtime telemetry is unavailable, the exporter falls back to Pi's local session JSONL files and derives a heuristic repo/branch slice from session id plus repo/branch mentions in tool calls and tool results.
 
 ## MCP bridge
 
@@ -95,25 +101,31 @@ For this repo's shared workflow stubs, MCP-backed work should therefore show bot
 
 Those files are ignored by git.
 
-The exporter reads `.git/pi-telemetry/events.jsonl`, slices events for the current repo/branch, then compares contributing session ids against all events in those sessions.
+The exporter reads, in order:
+
+1. `.git/pi-telemetry/events.jsonl`
+2. `~/.pi/agent/pr-telemetry/events.jsonl`
+3. Pi session logs under `~/.pi/agent/sessions/` as a fallback
+
+It slices events for the current repo/branch, then compares contributing session ids against all events in those sessions. If a contributing Pi session started outside the repo folder, the exporter treats the whole session as the PR context because that is the context the model used while producing the PR. `signoff-pr.sh` passes a cutoff timestamp to keep later Pi activity from changing the summary when old branches are re-summarized.
 
 ## Classification
 
-Classification is deterministic when runtime telemetry exists:
+Classification is deterministic when runtime telemetry exists and heuristic when the exporter falls back to Pi session logs:
 
-- multi-repo session: a contributing session has events from more than one git root
-- multi-branch session: a contributing session has events from more than one git-root/branch pair
-- multi-PR session: derived from multi-branch classification, and can be resolved further by querying GitHub for PRs by branch
+- multi-repo session: a contributing session has events or session-log mentions from more than one git root
+- multi-branch session: a contributing session has events or session-log mentions from more than one branch name
+- multi-PR session: a contributing session has more than one git-root/branch pair, and can be resolved further by querying GitHub for PRs by branch
 
 Reports include method/confidence fields, for example:
 
 ```json
 {
   "multiRepoSession": true,
-  "multiBranchSession": true,
-  "multiPrSession": "unresolved",
-  "method": "runtime-telemetry:sessionId+gitRoot+branch",
-  "confidence": "high"
+  "multiBranchSession": false,
+  "multiPrSession": "likely",
+  "method": "runtime-telemetry+pi-session-log",
+  "confidence": "medium"
 }
 ```
 
@@ -124,4 +136,4 @@ Context-window usage is a property of the whole Pi session. In multi-repo flows,
 - PR-attributed repo/branch slice
 - shared contributing-session total
 
-The shared-session total is the authoritative cost/context figure. The PR-attributed slice is useful for rough per-branch inspection but should not be interpreted as exclusive context ownership.
+The shared-session total is the authoritative cost/context figure. When a contributing session started outside the repo folder, the PR-attributed totals intentionally equal the full session totals; this duplicates cost/context across PRs from the same multi-repo session, but it is more honest than pretending the shared model context can be cleanly split by repository. For repo-started session-log fallback summaries, PR-attributed slices remain heuristic based on repo/branch mentions in tool calls and results.

@@ -458,6 +458,7 @@ export_pi_pr_telemetry() {
     --branch "$(git branch --show-current)" \
     --base "$base_ref" \
     --head "$(git rev-parse HEAD)" \
+    --cutoff "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
     --out-json "$ROOT_DIR/.pi/pr-telemetry-summary.json" \
     --out-md "$ROOT_DIR/.pi/pr-telemetry-summary.md"; then
     echo "Pi PR telemetry summary failed; continuing without telemetry comment."
