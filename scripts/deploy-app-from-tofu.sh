@@ -20,6 +20,7 @@ Environment overrides:
   SMOKE_TIMEOUT                Candidate smoke Job health timeout (default: 3m)
   DOCKER_PLATFORM              docker build platform (default: linux/amd64)
   PUBLISH_LATEST               Also push :latest when IMAGE_TAG != latest (default: false)
+  DEPLOY_RETRY_ATTEMPTS        Attempts for Docker build/push retryable steps (default: 3)
   SKIP_PRE_PROMOTION_SMOKE     Skip the candidate smoke workload gate (default: false)
   ALLOW_ZERO_READY_BEFORE_DEPLOY
                                Allow normal deploy when prod has zero ready pods (default: false)
@@ -48,6 +49,36 @@ require_cmd() {
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
+}
+
+retry_command() {
+  local description="$1"
+  shift
+
+  local max_attempts="${DEPLOY_RETRY_ATTEMPTS:-3}"
+  if ! [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "DEPLOY_RETRY_ATTEMPTS must be a positive integer, got: ${max_attempts}" >&2
+    exit 1
+  fi
+
+  local attempt=1
+  local sleep_seconds=0
+
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+
+    if (( attempt >= max_attempts )); then
+      echo "${description} failed after ${max_attempts} attempts." >&2
+      return 1
+    fi
+
+    sleep_seconds=$(( attempt * 15 ))
+    echo "${description} failed on attempt ${attempt}/${max_attempts}; retrying in ${sleep_seconds}s..." >&2
+    sleep "${sleep_seconds}"
+    attempt=$(( attempt + 1 ))
+  done
 }
 
 ensure_gke_auth_plugin() {
@@ -905,6 +936,7 @@ SMOKE_TIMEOUT="${SMOKE_TIMEOUT:-3m}"
 SMOKE_TIMEOUT_SECONDS="$(duration_to_seconds "${SMOKE_TIMEOUT}")"
 DOCKER_PLATFORM="${DOCKER_PLATFORM:-linux/amd64}"
 PUBLISH_LATEST="${PUBLISH_LATEST:-false}"
+DEPLOY_RETRY_ATTEMPTS="${DEPLOY_RETRY_ATTEMPTS:-3}"
 SKIP_PRE_PROMOTION_SMOKE="${SKIP_PRE_PROMOTION_SMOKE:-false}"
 ALLOW_ZERO_READY_BEFORE_DEPLOY="${ALLOW_ZERO_READY_BEFORE_DEPLOY:-false}"
 ALLOW_SCALE_TO_ZERO_RECOVERY="${ALLOW_SCALE_TO_ZERO_RECOVERY:-false}"
@@ -1001,13 +1033,14 @@ ensure_ready_before_deploy "${NAMESPACE}" "${WORKLOAD_KIND}" "${WORKLOAD_NAME}"
 
 log "Building image ${IMAGE_URI}"
 gcloud auth configure-docker "${REGISTRY_HOST}" --quiet
-docker build --platform "${DOCKER_PLATFORM}" -f src/Freetool.Api/Dockerfile -t "${IMAGE_URI}" .
-docker push "${IMAGE_URI}"
+retry_command "Docker build for ${IMAGE_URI}" \
+  docker build --platform "${DOCKER_PLATFORM}" -f src/Freetool.Api/Dockerfile -t "${IMAGE_URI}" .
+retry_command "Docker push for ${IMAGE_URI}" docker push "${IMAGE_URI}"
 
 if [[ "${PUBLISH_LATEST}" == "true" && "${IMAGE_TAG}" != "latest" ]]; then
   log "Publishing latest tag ${LATEST_IMAGE_URI}"
   docker tag "${IMAGE_URI}" "${LATEST_IMAGE_URI}"
-  docker push "${LATEST_IMAGE_URI}"
+  retry_command "Docker push for ${LATEST_IMAGE_URI}" docker push "${LATEST_IMAGE_URI}"
 fi
 
 if [[ -z "${IMAGE_DIGEST:-}" ]]; then
