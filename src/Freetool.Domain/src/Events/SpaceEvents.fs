@@ -42,7 +42,7 @@ type SpaceUpdatedEvent = {
         member this.UserId = this.ActorUserId
 
 /// Event raised when a Space is deleted
-/// Includes Name for audit log display (per CLAUDE.md checklist)
+/// Includes Name for audit log display (per AGENTS.md checklist)
 type SpaceDeletedEvent = {
     SpaceId: SpaceId
     Name: string
