@@ -99,6 +99,7 @@ th, td { text-align: left; padding: .75rem; border-bottom: 1px solid var(--borde
 th { color: var(--muted); font-size: .85rem; }
 .detached-form { display: none; }
 .permissions-matrix-wrap { border: 1px solid var(--border); border-radius: 12px; }
+.permissions-form .permissions-matrix-wrap { margin-bottom: 1rem; }
 .permissions-table { min-width: 1120px; border-collapse: separate; border-spacing: 0; }
 .permissions-table th, .permissions-table td { text-align: center; vertical-align: middle; }
 .permissions-table th { background: var(--surface); }

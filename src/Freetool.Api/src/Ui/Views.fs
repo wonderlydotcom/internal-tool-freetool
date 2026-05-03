@@ -942,6 +942,9 @@ module Views =
     let private inheritsAllPermissions (spaceMember: SpaceMemberPermissionsDto) =
         spaceMember.IsModerator || spaceMember.IsOrgAdmin
 
+    let private moderatorInheritedHelp =
+        "Moderators get all permissions by default and cannot be removed without changing the moderator."
+
     let private memberPermissionsFormId = "member-permissions-batch-form"
 
     let private permissionFieldForUser (field: string) (userId: string) = $"{field}:{userId}"
@@ -980,16 +983,20 @@ module Views =
         =
         permissionCheckboxInputWithAttrs formId name labelText isChecked isDisabled []
 
-    let private savePermissionsButton (formId: string) =
+    let private saveChangedPermissionsButton (formId: string) (labelText: string) =
         let tag =
             UiHtml.attrs
                 [ "type", "submit"
                   "form", formId
                   "class", "button"
+                  "disabled", "disabled"
                   "data-permissions-save", "true" ]
                 (button ())
 
-        tag { "Save permissions" }
+        tag { labelText }
+
+    let private savePermissionsButton (formId: string) =
+        saveChangedPermissionsButton formId "Save permissions"
 
     let private dangerSubmitButtonSmall (labelText: string) =
         button (type' = "submit", class' = "button button-danger button-small") { labelText }
@@ -1040,18 +1047,63 @@ module Views =
 
                         for group in permissionGroups do
                             for columnIndex, column in group.Columns |> List.indexed do
+                                let isChecked = column.IsChecked permissions
+
                                 td (class' = groupStartClass "permission-cell" columnIndex) {
-                                    permissionCheckboxInput
+                                    permissionCheckboxInputWithAttrs
                                         None
                                         column.FormField
                                         $"Default {column.Label.ToLowerInvariant()}"
-                                        (column.IsChecked permissions)
+                                        isChecked
                                         false
+                                        [ "data-permission-checkbox", "true"
+                                          "data-initial-checked", if isChecked then "true" else "false" ]
                                 }
                     }
                 }
             }
         }
+
+    let private deleteSpaceConfirmationModal (token: string) (space: SpaceData) =
+        let sid = spaceId space
+        let modalId = $"delete-space-{sid}"
+        let formTag = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/delete" [ "data-typed-confirm-form", "true" ]
+
+        modalDialog
+            modalId
+            "Delete space"
+            (Some "This permanently deletes the space and removes its authorization relationships.")
+            (formTag {
+                UiHtml.antiforgeryInput token
+                p () {
+                    "Type "
+                    strong () { space.Name }
+                    " to confirm deletion."
+                }
+
+                let confirmInput =
+                    UiHtml.attrs
+                        [ "type", "text"
+                          "name", "ConfirmName"
+                          "placeholder", space.Name
+                          "required", "required"
+                          "autocomplete", "off"
+                          "data-confirm-input", "true"
+                          "data-confirm-expected", space.Name ]
+                        (input ())
+
+                field "Confirm space name" confirmInput None
+
+                let deleteButton =
+                    UiHtml.attrs
+                        [ "type", "submit"
+                          "class", "button button-danger"
+                          "disabled", "disabled"
+                          "data-confirm-submit", "true" ]
+                        (button ())
+
+                deleteButton { "Delete space" }
+            })
 
     let settingsPage (token: string) (space: SpaceData) (users: UserData list) (members: SpaceMemberPermissionsDto list) (defaultPermissions: SpacePermissionsDto) =
         let sid = spaceId space
@@ -1104,11 +1156,9 @@ module Views =
 
                 section (class' = "card danger-zone") {
                     cardHeader "Danger zone" (Some "Deleting a space also removes authorization relationships.")
-                    let formTag19 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/delete" [ "data-confirm", $"Delete space {space.Name}?" ]
-                    formTag19 {
-                        UiHtml.antiforgeryInput token
-                        UiHtml.dangerSubmitButton "Delete space"
-                    }
+                    let deleteModalId = $"delete-space-{sid}"
+                    modalOpenButton deleteModalId "Delete space" "trash" "button button-danger"
+                    deleteSpaceConfirmationModal token space
                 }
             }
 
@@ -1178,23 +1228,43 @@ module Views =
                                                         let isChecked = isInherited || column.IsChecked spaceMember.Permissions
                                                         let checkboxName = permissionFieldForUser column.FormField spaceMember.UserId
 
-                                                        td (class' = groupStartClass "permission-cell" columnIndex) {
+                                                        let checkboxAttrs =
+                                                            if spaceMember.IsModerator then
+                                                                [ "title", moderatorInheritedHelp ]
+                                                            elif isInherited then
+                                                                []
+                                                            else
+                                                                [ "data-permission-checkbox", "true"
+                                                                  "data-initial-checked", if isChecked then "true" else "false" ]
+
+                                                        let cellAttrs =
+                                                            [ "class", groupStartClass "permission-cell" columnIndex ]
+                                                            @ if spaceMember.IsModerator then [ "title", moderatorInheritedHelp ] else []
+
+                                                        let cell = UiHtml.attrs cellAttrs (td ())
+                                                        cell {
                                                             permissionCheckboxInputWithAttrs
                                                                 (if isInherited then None else Some memberPermissionsFormId)
                                                                 checkboxName
                                                                 $"{column.Label} for {displayName}"
                                                                 isChecked
                                                                 isInherited
-                                                                (if isInherited then
-                                                                     []
-                                                                 else
-                                                                     [ "data-permission-checkbox", "true"
-                                                                       "data-initial-checked", if isChecked then "true" else "false" ])
+                                                                checkboxAttrs
                                                         }
 
-                                                td (class' = "actions-column") {
+                                                let actionsAttrs =
+                                                    [ "class", "actions-column" ]
+                                                    @ if spaceMember.IsModerator then [ "title", moderatorInheritedHelp ] else []
+
+                                                let actionsCell = UiHtml.attrs actionsAttrs (td ())
+                                                actionsCell {
                                                     if isInherited then
-                                                        span (class' = "badge") { "Inherited" }
+                                                        let inheritedAttrs =
+                                                            [ "class", "badge" ]
+                                                            @ if spaceMember.IsModerator then [ "title", moderatorInheritedHelp ] else []
+
+                                                        let inheritedBadge = UiHtml.attrs inheritedAttrs (span ())
+                                                        inheritedBadge { "Inherited" }
                                                     else
                                                         let formTag21 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/members/remove" []
                                                         formTag21 {
@@ -1215,13 +1285,20 @@ module Views =
                     }
             }
 
-            section (class' = "card") {
+            let defaultPermissionsSection = UiHtml.attrs [ "class", "card"; "data-permissions-matrix", "true" ] (section ())
+            defaultPermissionsSection {
                 cardHeader "Default member permissions" (Some "Applied to regular members through OpenFGA inherited relationships.")
-                let formTag22 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/default-member-permissions" []
+                let defaultPermissionsFormId = "default-member-permissions-form"
+                let formTag22 =
+                    UiHtml.enhancedPostForm
+                        $"/_ui/spaces/{sid}/default-member-permissions"
+                        [ "id", defaultPermissionsFormId
+                          "class", "permissions-form" ]
+
                 formTag22 {
                     UiHtml.antiforgeryInput token
                     defaultPermissionsMatrix defaultPermissions
-                    UiHtml.submitButton "Save default permissions"
+                    saveChangedPermissionsButton defaultPermissionsFormId "Save default permissions"
                 }
             }
         }
