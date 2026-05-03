@@ -337,19 +337,18 @@ module Views =
             }
 
             section (class' = "card") {
-                div (class' = "card-list") {
+                div (class' = "spaces-grid") {
                     for space in spaces do
                         let sid = spaceId space
-                        article (class' = "list-row") {
-                            div () {
+                        article (class' = "space-card") {
+                            a (href = $"/spaces/{sid}", class' = "space-card-link") {
                                 h3 () { space.Name }
                                 p () {
                                     $"Moderator: {selectedUserName users space.ModeratorUserId} · Members: {List.length space.MemberIds}"
                                 }
                             }
-                            div (class' = "row-actions") {
-                                a (href = $"/spaces/{sid}", class' = "button button-secondary") { "Open" }
-                                a (href = $"/spaces/{sid}/settings", class' = "button button-ghost") { "Settings" }
+                            div (class' = "space-card-actions") {
+                                iconOnlyLink $"/spaces/{sid}/settings" $"{space.Name} settings" "⚙️"
                             }
                         }
                 }
