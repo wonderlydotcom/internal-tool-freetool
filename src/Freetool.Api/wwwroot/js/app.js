@@ -3,6 +3,37 @@
     return target instanceof Element ? target.closest(selector) : null;
   }
 
+  function updatePermissionsSaveState(container) {
+    const saveButton = container.querySelector("[data-permissions-save]");
+    if (!(saveButton instanceof HTMLButtonElement)) return;
+
+    const checkboxes = Array.from(
+      container.querySelectorAll("[data-permission-checkbox]")
+    );
+
+    const hasChanges = checkboxes.some((checkbox) => {
+      if (!(checkbox instanceof HTMLInputElement)) return false;
+      const initialValue = checkbox.getAttribute("data-initial-checked") === "true";
+      return checkbox.checked !== initialValue;
+    });
+
+    saveButton.disabled = !hasChanges;
+  }
+
+  function initializePermissionsMatrices() {
+    document
+      .querySelectorAll("[data-permissions-matrix]")
+      .forEach(updatePermissionsSaveState);
+  }
+
+  document.addEventListener("change", (event) => {
+    const checkbox = closest(event.target, "[data-permission-checkbox]");
+    if (!checkbox) return;
+
+    const container = checkbox.closest("[data-permissions-matrix]");
+    if (container) updatePermissionsSaveState(container);
+  });
+
   document.addEventListener("click", (event) => {
     const target = event.target;
     const addButton = closest(target, "[data-add-kv-row]");
@@ -47,4 +78,6 @@
       if (!window.confirm(message)) event.preventDefault();
     }
   });
+
+  initializePermissionsMatrices();
 })();

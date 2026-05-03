@@ -876,10 +876,16 @@ module Views =
         if isNull value then String.Empty else value.ToLowerInvariant()
 
     let private memberDisplayName (spaceMember: SpaceMemberPermissionsDto) =
-        if String.IsNullOrWhiteSpace spaceMember.UserName then
+        let hasName =
+            not (String.IsNullOrWhiteSpace spaceMember.UserName)
+            && not (String.Equals(spaceMember.UserName, "Unknown User", StringComparison.OrdinalIgnoreCase))
+
+        if hasName then
+            spaceMember.UserName
+        elif not (String.IsNullOrWhiteSpace spaceMember.UserEmail) then
             spaceMember.UserEmail
         else
-            spaceMember.UserName
+            "Unknown user"
 
     let private memberInitials (spaceMember: SpaceMemberPermissionsDto) =
         let source = memberDisplayName spaceMember
@@ -903,15 +909,17 @@ module Views =
     let private inheritsAllPermissions (spaceMember: SpaceMemberPermissionsDto) =
         spaceMember.IsModerator || spaceMember.IsOrgAdmin
 
-    let private memberPermissionFormId (spaceMember: SpaceMemberPermissionsDto) =
-        $"member-permissions-{spaceMember.UserId}"
+    let private memberPermissionsFormId = "member-permissions-batch-form"
 
-    let private permissionCheckboxInput
+    let private permissionFieldForUser (field: string) (userId: string) = $"{field}:{userId}"
+
+    let private permissionCheckboxInputWithAttrs
         (formId: string option)
         (name: string)
         (labelText: string)
         (isChecked: bool)
         (isDisabled: bool)
+        (extraAttrs: (string * string) list)
         =
         let formAttrs =
             formId
@@ -925,13 +933,30 @@ module Views =
                "class", "permission-matrix-checkbox"
                "aria-label", labelText ]
              @ formAttrs
+             @ extraAttrs
              @ UiHtml.checkedAttr isChecked
              @ UiHtml.disabledAttr isDisabled)
             (input ())
 
-    let private submitButtonForForm (formId: string) (labelText: string) =
-        let tag = UiHtml.attrs [ "type", "submit"; "form", formId; "class", "button button-small" ] (button ())
-        tag { labelText }
+    let private permissionCheckboxInput
+        (formId: string option)
+        (name: string)
+        (labelText: string)
+        (isChecked: bool)
+        (isDisabled: bool)
+        =
+        permissionCheckboxInputWithAttrs formId name labelText isChecked isDisabled []
+
+    let private savePermissionsButton (formId: string) =
+        let tag =
+            UiHtml.attrs
+                [ "type", "submit"
+                  "form", formId
+                  "class", "button"
+                  "data-permissions-save", "true" ]
+                (button ())
+
+        tag { "Save permissions" }
 
     let private dangerSubmitButtonSmall (labelText: string) =
         button (type' = "submit", class' = "button button-danger button-small") { labelText }
@@ -1002,6 +1027,8 @@ module Views =
             members
             |> List.sortBy (fun spaceMember -> (sortText (memberDisplayName spaceMember), sortText spaceMember.UserEmail))
 
+        let editableMembers = sortedMembers |> List.filter (inheritsAllPermissions >> not)
+
         section (class' = "stack") {
             spaceTabs space "settings"
             section (class' = "grid grid-two") {
@@ -1052,95 +1079,106 @@ module Views =
                 }
             }
 
-            section (class' = "card") {
-                cardHeader
-                    "Members"
-                    (Some
-                        "Permissions are shown as a matrix so you can scan access by user and capability. Moderators and organization admins inherit every permission.")
+            let membersSection = UiHtml.attrs [ "class", "card"; "data-permissions-matrix", "true" ] (section ())
+            membersSection {
+                div (class' = "card-header card-header-actions") {
+                    div () {
+                        h2 () { "Members" }
+                        p () { "Permissions are shown as a matrix so you can scan access by user and capability. Moderators and organization admins inherit every permission." }
+                    }
+
+                    if not (List.isEmpty editableMembers) then
+                        savePermissionsButton memberPermissionsFormId
+                }
 
                 if List.isEmpty sortedMembers then
                     emptyState "No members" "Add members to this space before assigning permissions."
                 else
-                    for spaceMember in sortedMembers do
-                        if not (inheritsAllPermissions spaceMember) then
-                            let formTag20 =
-                                UiHtml.enhancedPostForm
-                                    $"/_ui/spaces/{sid}/members/permissions"
-                                    [ "id", memberPermissionFormId spaceMember
-                                      "class", "detached-form" ]
+                    if not (List.isEmpty editableMembers) then
+                        let formTag20 =
+                            UiHtml.enhancedPostForm
+                                $"/_ui/spaces/{sid}/members/permissions"
+                                [ "id", memberPermissionsFormId
+                                  "class", "detached-form" ]
 
-                            formTag20 {
-                                UiHtml.antiforgeryInput token
-                                UiHtml.hidden "UserId" spaceMember.UserId
-                            }
+                        formTag20 {
+                            UiHtml.antiforgeryInput token
 
-                    div (class' = "table-wrap permissions-matrix-wrap") {
-                        table (class' = "permissions-table") {
-                            permissionMatrixHeader "User" true
-                            tbody () {
-                                for spaceMember in sortedMembers do
-                                    let isInherited = inheritsAllPermissions spaceMember
-                                    let formId = memberPermissionFormId spaceMember
-                                    let displayName = memberDisplayName spaceMember
-                                    let rowClass = if isInherited then "permission-row permission-row-inherited" else "permission-row"
+                            for spaceMember in editableMembers do
+                                UiHtml.hidden "UserIds" spaceMember.UserId
+                        }
 
-                                    tr (class' = rowClass) {
-                                        td (class' = "member-column") {
-                                            div (class' = "member-summary") {
-                                                memberAvatar spaceMember
-                                                div (class' = "member-summary-text") {
-                                                    strong () { displayName }
-                                                    small (class' = "member-email") { spaceMember.UserEmail }
-                                                    div (class' = "role-badges") {
-                                                        if spaceMember.IsOrgAdmin then
-                                                            span (class' = "badge") { "Org admin" }
+                    div (class' = "permissions-matrix") {
+                        div (class' = "table-wrap permissions-matrix-wrap") {
+                                table (class' = "permissions-table") {
+                                    permissionMatrixHeader "User" true
+                                    tbody () {
+                                        for spaceMember in sortedMembers do
+                                            let isInherited = inheritsAllPermissions spaceMember
+                                            let displayName = memberDisplayName spaceMember
+                                            let rowClass = if isInherited then "permission-row permission-row-inherited" else "permission-row"
 
-                                                        if spaceMember.IsModerator then
-                                                            span (class' = "badge badge-muted") { "Moderator" }
+                                            tr (class' = rowClass) {
+                                                td (class' = "member-column") {
+                                                    div (class' = "member-summary") {
+                                                        memberAvatar spaceMember
+                                                        div (class' = "member-summary-text") {
+                                                            span (class' = "member-name-line") {
+                                                                strong () { displayName }
 
-                                                        if not isInherited then
-                                                            span (class' = "badge badge-muted") { "Member" }
+                                                                if spaceMember.IsModerator then
+                                                                    let crown =
+                                                                        UiHtml.attrs
+                                                                            [ "class", "moderator-crown"
+                                                                              "title", "Space moderator"
+                                                                              "aria-label", "Space moderator" ]
+                                                                            (span ())
+
+                                                                    crown { "👑" }
+                                                            }
+                                                        }
                                                     }
+                                                }
+
+                                                for group in permissionGroups do
+                                                    for columnIndex, column in group.Columns |> List.indexed do
+                                                        let isChecked = isInherited || column.IsChecked spaceMember.Permissions
+                                                        let checkboxName = permissionFieldForUser column.FormField spaceMember.UserId
+
+                                                        td (class' = groupStartClass "permission-cell" columnIndex) {
+                                                            permissionCheckboxInputWithAttrs
+                                                                (if isInherited then None else Some memberPermissionsFormId)
+                                                                checkboxName
+                                                                $"{column.Label} for {displayName}"
+                                                                isChecked
+                                                                isInherited
+                                                                (if isInherited then
+                                                                     []
+                                                                 else
+                                                                     [ "data-permission-checkbox", "true"
+                                                                       "data-initial-checked", if isChecked then "true" else "false" ])
+                                                        }
+
+                                                td (class' = "actions-column") {
+                                                    if isInherited then
+                                                        span (class' = "badge") { "Inherited" }
+                                                    else
+                                                        let formTag21 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/members/remove" []
+                                                        formTag21 {
+                                                            UiHtml.antiforgeryInput token
+                                                            UiHtml.hidden "UserId" spaceMember.UserId
+                                                            dangerSubmitButtonSmall "Remove"
+                                                        }
                                                 }
                                             }
-                                        }
-
-                                        for group in permissionGroups do
-                                            for columnIndex, column in group.Columns |> List.indexed do
-                                                let isChecked = isInherited || column.IsChecked spaceMember.Permissions
-
-                                                td (class' = groupStartClass "permission-cell" columnIndex) {
-                                                    permissionCheckboxInput
-                                                        (if isInherited then None else Some formId)
-                                                        column.FormField
-                                                        $"{column.Label} for {displayName}"
-                                                        isChecked
-                                                        isInherited
-                                                }
-
-                                        td (class' = "actions-column") {
-                                            if isInherited then
-                                                span (class' = "badge") { "Inherited" }
-                                            else
-                                                div (class' = "matrix-actions") {
-                                                    submitButtonForForm formId "Save"
-
-                                                    let formTag21 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/members/remove" []
-                                                    formTag21 {
-                                                        UiHtml.antiforgeryInput token
-                                                        UiHtml.hidden "UserId" spaceMember.UserId
-                                                        dangerSubmitButtonSmall "Remove"
-                                                    }
-                                                }
-                                        }
                                     }
+                                }
                             }
-                        }
-                    }
 
-                    div (class' = "permissions-legend") {
-                        span () { "✓ Moderators and organization admins inherit every permission." }
-                        span () { "Use each row's Save button after changing that user's boxes." }
+                        div (class' = "permissions-legend") {
+                            span () { "✓ Moderators and organization admins inherit every permission." }
+                            span () { "Change any checkbox to enable Save permissions." }
+                        }
                     }
             }
 
