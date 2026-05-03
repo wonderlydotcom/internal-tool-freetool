@@ -69,7 +69,40 @@ module Views =
 
     let private srOnly (text: string) : HtmlElement = span (class' = "sr-only") { text }
 
-    let private iconOnlyButton (labelText: string) (iconText: string) (extraAttrs: (string * string) list) : HtmlElement =
+    let private iconSvg (iconName: string) : HtmlElement =
+        let normalized =
+            match iconName with
+            | "+" -> "plus"
+            | value -> value
+
+        let body =
+            match normalized with
+            | "plus" -> "<path d=\"M5 12h14\"></path><path d=\"M12 5v14\"></path>"
+            | "edit" ->
+                "<path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\"></path><path d=\"m15 5 4 4\"></path>"
+            | "trash" ->
+                "<path d=\"M3 6h18\"></path><path d=\"M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6\"></path><path d=\"M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2\"></path><path d=\"M10 11v6\"></path><path d=\"M14 11v6\"></path>"
+            | "play" -> "<polygon points=\"6 3 20 12 6 21 6 3\"></polygon>"
+            | "settings" ->
+                "<path d=\"M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z\"></path><circle cx=\"12\" cy=\"12\" r=\"3\"></circle>"
+            | "folder" ->
+                "<path d=\"M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z\"></path>"
+            | "app" ->
+                "<rect width=\"20\" height=\"16\" x=\"2\" y=\"4\" rx=\"2\"></rect><path d=\"M10 4v4\"></path><path d=\"M2 8h20\"></path>"
+            | "dashboard" ->
+                "<rect width=\"7\" height=\"9\" x=\"3\" y=\"3\" rx=\"1\"></rect><rect width=\"7\" height=\"5\" x=\"14\" y=\"3\" rx=\"1\"></rect><rect width=\"7\" height=\"9\" x=\"14\" y=\"12\" rx=\"1\"></rect><rect width=\"7\" height=\"5\" x=\"3\" y=\"16\" rx=\"1\"></rect>"
+            | "resource" ->
+                "<path d=\"M12 22v-5\"></path><path d=\"M9 8V2\"></path><path d=\"M15 8V2\"></path><path d=\"M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z\"></path>"
+            | "dot" -> "<circle cx=\"12\" cy=\"12\" r=\"1\"></circle>"
+            | _ -> normalized
+
+        if body = normalized then
+            span (class' = "ui-icon-fallback") { normalized }
+        else
+            raw
+                $"<svg class=\"ui-icon\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\" focusable=\"false\">{body}</svg>"
+
+    let private iconOnlyButton (labelText: string) (iconName: string) (extraAttrs: (string * string) list) : HtmlElement =
         let tag =
             UiHtml.attrs
                 ([ "type", "button"
@@ -80,11 +113,11 @@ module Views =
                 (button ())
 
         tag {
-            span () { iconText }
+            span (class' = "button-icon") { iconSvg iconName }
             srOnly labelText
         }
 
-    let private iconOnlyLink (href: string) (labelText: string) (iconText: string) : HtmlElement =
+    let private iconOnlyLink (href: string) (labelText: string) (iconName: string) : HtmlElement =
         let tag =
             UiHtml.attrs
                 [ "href", href
@@ -94,7 +127,7 @@ module Views =
                 (a ())
 
         tag {
-            span () { iconText }
+            span (class' = "button-icon") { iconSvg iconName }
             srOnly labelText
         }
 
@@ -114,12 +147,12 @@ module Views =
                     (button ())
 
             buttonTag {
-                span () { "🗑️" }
+                span (class' = "button-icon") { iconSvg "trash" }
                 srOnly labelText
             }
         }
 
-    let private modalOpenButton (modalId: string) (labelText: string) (iconText: string) (buttonClass: string) : HtmlElement =
+    let private modalOpenButton (modalId: string) (labelText: string) (iconName: string) (buttonClass: string) : HtmlElement =
         let tag =
             UiHtml.attrs
                 [ "type", "button"
@@ -129,12 +162,12 @@ module Views =
                 (button ())
 
         tag {
-            span () { iconText }
+            span (class' = "button-icon") { iconSvg iconName }
             span () { labelText }
         }
 
-    let private iconModalOpenButton (modalId: string) (labelText: string) (iconText: string) : HtmlElement =
-        iconOnlyButton labelText iconText [ "data-modal-open", modalId ]
+    let private iconModalOpenButton (modalId: string) (labelText: string) (iconName: string) : HtmlElement =
+        iconOnlyButton labelText iconName [ "data-modal-open", modalId ]
 
     let private modalDialog (modalId: string) (title: string) (subtitle: string option) (content: HtmlElement) =
         dialog (id = modalId, class' = "modal") {
@@ -200,11 +233,11 @@ module Views =
 
     let private objectIcon kind =
         match kind with
-        | "Folder" -> "📁"
-        | "App" -> "⚡"
-        | "Dashboard" -> "📊"
-        | "Resource" -> "🔌"
-        | _ -> "•"
+        | "Folder" -> "folder"
+        | "App" -> "app"
+        | "Dashboard" -> "dashboard"
+        | "Resource" -> "resource"
+        | _ -> "dot"
 
     let private objectCard
         (title: string)
@@ -215,7 +248,7 @@ module Views =
         =
         article (class' = "object-card") {
             a (href = href, class' = "object-card-link", title = kind) {
-                span (class' = "object-icon") { objectIcon kind }
+                span (class' = "object-icon") { iconSvg (objectIcon kind) }
                 h3 () { title }
                 match description with
                 | Some value when not (String.IsNullOrWhiteSpace value) -> p () { value }
@@ -318,7 +351,7 @@ module Views =
             emptyState "No spaces yet" "Create a space to start building internal tools."
 
             if isOrgAdmin then
-                div (class' = "actions") { modalOpenButton modalId "New Space" "+" "button" }
+                div (class' = "actions") { modalOpenButton modalId "New Space" "plus" "button" }
                 modalDialog modalId "Create space" (Some "Spaces group resources, folders, apps, dashboards, and permissions.") (createSpaceForm token users)
         }
 
@@ -333,7 +366,7 @@ module Views =
                 }
 
                 if isOrgAdmin then
-                    modalOpenButton modalId "New Space" "+" "button"
+                    modalOpenButton modalId "New Space" "plus" "button"
             }
 
             section (class' = "card") {
@@ -348,7 +381,7 @@ module Views =
                                 }
                             }
                             div (class' = "space-card-actions") {
-                                iconOnlyLink $"/spaces/{sid}/settings" $"{space.Name} settings" "⚙️"
+                                iconOnlyLink $"/spaces/{sid}/settings" $"{space.Name} settings" "settings"
                             }
                         }
                 }
@@ -377,7 +410,7 @@ module Views =
                     div () { cardHeader space.Name (Some "Root folder") }
                     div (class' = "actions") {
                         if permissions.CreateFolder then
-                            modalOpenButton createFolderModalId "New Folder" "+" "button"
+                            modalOpenButton createFolderModalId "New Folder" "plus" "button"
                     }
                 }
             }
@@ -391,9 +424,9 @@ module Views =
                     let actions =
                         [
                             if permissions.CreateFolder then
-                                iconModalOpenButton subfolderModalId "New subfolder" "➕"
+                                iconModalOpenButton subfolderModalId "New subfolder" "plus"
                             if permissions.EditFolder then
-                                iconModalOpenButton renameModalId "Rename folder" "✏️"
+                                iconModalOpenButton renameModalId "Rename folder" "edit"
                             if permissions.DeleteFolder then
                                 iconDeleteForm token $"/_ui/spaces/{sid}/folders/{fid}/delete" "Delete folder" $"Delete folder {folder.Name.Value}?"
                         ]
@@ -405,8 +438,8 @@ module Views =
                     let aid = appId app
                     let actions =
                         [
-                            if permissions.RunApp then iconOnlyLink $"/spaces/{sid}/{aid}/run" "Run app" "▶️"
-                            if permissions.EditApp then iconOnlyLink $"/spaces/{sid}/{aid}" "Edit app" "✏️"
+                            if permissions.RunApp then iconOnlyLink $"/spaces/{sid}/{aid}/run" "Run app" "play"
+                            if permissions.EditApp then iconOnlyLink $"/spaces/{sid}/{aid}" "Edit app" "edit"
                             if permissions.DeleteApp then
                                 iconDeleteForm token $"/_ui/spaces/{sid}/apps/{aid}/delete" "Delete app" $"Delete app {app.Name}?"
                         ]
@@ -416,8 +449,8 @@ module Views =
                     let did = dashboardId dashboard
                     let actions =
                         [
-                            if permissions.RunDashboard then iconOnlyLink $"/spaces/{sid}/{did}/dashboard-run" "Run dashboard" "▶️"
-                            if permissions.EditDashboard then iconOnlyLink $"/spaces/{sid}/{did}" "Edit dashboard" "✏️"
+                            if permissions.RunDashboard then iconOnlyLink $"/spaces/{sid}/{did}/dashboard-run" "Run dashboard" "play"
+                            if permissions.EditDashboard then iconOnlyLink $"/spaces/{sid}/{did}" "Edit dashboard" "edit"
                             if permissions.DeleteDashboard then
                                 iconDeleteForm token $"/_ui/spaces/{sid}/dashboards/{did}/delete" "Delete dashboard" $"Delete dashboard {dashboard.Name.Value}?"
                         ]
@@ -456,13 +489,13 @@ module Views =
                     div () { cardHeader folder.Name.Value (Some "Folder") }
                     div (class' = "actions") {
                         if permissions.CreateFolder then
-                            modalOpenButton createFolderModalId "New Folder" "+" "button button-secondary"
+                            modalOpenButton createFolderModalId "New Folder" "plus" "button button-secondary"
                         if permissions.CreateApp && not (List.isEmpty resources) then
-                            modalOpenButton createAppModalId "New App" "+" "button button-secondary"
+                            modalOpenButton createAppModalId "New App" "plus" "button button-secondary"
                         if permissions.CreateDashboard then
-                            modalOpenButton createDashboardModalId "New Dashboard" "+" "button button-secondary"
+                            modalOpenButton createDashboardModalId "New Dashboard" "plus" "button button-secondary"
                         if permissions.EditFolder then
-                            modalOpenButton renameModalId "Rename" "✏️" "button button-ghost"
+                            modalOpenButton renameModalId "Rename" "edit" "button button-ghost"
                         if permissions.DeleteFolder then
                             iconDeleteForm token $"/_ui/spaces/{sid}/folders/{fid}/delete" "Delete folder" $"Delete folder {folder.Name.Value}?"
                     }
@@ -481,9 +514,9 @@ module Views =
                     let actions =
                         [
                             if permissions.CreateFolder then
-                                iconModalOpenButton childSubfolderModalId "New subfolder" "➕"
+                                iconModalOpenButton childSubfolderModalId "New subfolder" "plus"
                             if permissions.EditFolder then
-                                iconModalOpenButton childRenameModalId "Rename folder" "✏️"
+                                iconModalOpenButton childRenameModalId "Rename folder" "edit"
                             if permissions.DeleteFolder then
                                 iconDeleteForm token $"/_ui/spaces/{sid}/folders/{childId}/delete" "Delete folder" $"Delete folder {child.Name.Value}?"
                         ]
@@ -495,8 +528,8 @@ module Views =
                     let aid = appId app
                     let actions =
                         [
-                            if permissions.RunApp then iconOnlyLink $"/spaces/{sid}/{aid}/run" "Run app" "▶️"
-                            if permissions.EditApp then iconOnlyLink $"/spaces/{sid}/{aid}" "Edit app" "✏️"
+                            if permissions.RunApp then iconOnlyLink $"/spaces/{sid}/{aid}/run" "Run app" "play"
+                            if permissions.EditApp then iconOnlyLink $"/spaces/{sid}/{aid}" "Edit app" "edit"
                             if permissions.DeleteApp then
                                 iconDeleteForm token $"/_ui/spaces/{sid}/apps/{aid}/delete" "Delete app" $"Delete app {app.Name}?"
                         ]
@@ -506,8 +539,8 @@ module Views =
                     let did = dashboardId dashboard
                     let actions =
                         [
-                            if permissions.RunDashboard then iconOnlyLink $"/spaces/{sid}/{did}/dashboard-run" "Run dashboard" "▶️"
-                            if permissions.EditDashboard then iconOnlyLink $"/spaces/{sid}/{did}" "Edit dashboard" "✏️"
+                            if permissions.RunDashboard then iconOnlyLink $"/spaces/{sid}/{did}/dashboard-run" "Run dashboard" "play"
+                            if permissions.EditDashboard then iconOnlyLink $"/spaces/{sid}/{did}" "Edit dashboard" "edit"
                             if permissions.DeleteDashboard then
                                 iconDeleteForm token $"/_ui/spaces/{sid}/dashboards/{did}/delete" "Delete dashboard" $"Delete dashboard {dashboard.Name.Value}?"
                         ]
