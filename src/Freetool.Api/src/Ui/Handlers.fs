@@ -13,6 +13,7 @@ open Freetool.Application.DTOs
 open Freetool.Application.Handlers
 open Freetool.Application.Interfaces
 open Freetool.Application.Mappers
+open Freetool.Application.Services
 open Freetool.Domain
 open Freetool.Domain.Entities
 open Freetool.Domain.ValueObjects
@@ -87,6 +88,7 @@ module Handlers =
     let private resources (ctx: HttpContext) = service<IResourceRepository> ctx
     let private runs (ctx: HttpContext) = service<IRunRepository> ctx
     let private events (ctx: HttpContext) = service<IEventRepository> ctx
+    let private eventEnhancement (ctx: HttpContext) = service<IEventEnhancementService> ctx
     let private sqlExecution (ctx: HttpContext) = service<ISqlExecutionService> ctx
     let private auth (ctx: HttpContext) = service<IAuthorizationService> ctx
 
@@ -203,6 +205,42 @@ module Handlers =
                 (UiContext.actorUserId ctx)
                 spaceId
                 permission
+    }
+
+    let private getSpaceUiPermissions (ctx: HttpContext) (spaceId: SpaceId) : Task<SpacePermissionsDto> = task {
+        let! createResource = hasSpacePermission ctx spaceId AuthRelation.ResourceCreate
+        let! editResource = hasSpacePermission ctx spaceId AuthRelation.ResourceEdit
+        let! deleteResource = hasSpacePermission ctx spaceId AuthRelation.ResourceDelete
+        let! createApp = hasSpacePermission ctx spaceId AuthRelation.AppCreate
+        let! editApp = hasSpacePermission ctx spaceId AuthRelation.AppEdit
+        let! deleteApp = hasSpacePermission ctx spaceId AuthRelation.AppDelete
+        let! runApp = hasSpacePermission ctx spaceId AuthRelation.AppRun
+        let! createDashboard = hasSpacePermission ctx spaceId AuthRelation.DashboardCreate
+        let! editDashboard = hasSpacePermission ctx spaceId AuthRelation.DashboardEdit
+        let! deleteDashboard = hasSpacePermission ctx spaceId AuthRelation.DashboardDelete
+        let! runDashboard = hasSpacePermission ctx spaceId AuthRelation.DashboardRun
+        let! createFolder = hasSpacePermission ctx spaceId AuthRelation.FolderCreate
+        let! editFolder = hasSpacePermission ctx spaceId AuthRelation.FolderEdit
+        let! deleteFolder = hasSpacePermission ctx spaceId AuthRelation.FolderDelete
+
+        return
+            ({
+                CreateResource = createResource
+                EditResource = editResource
+                DeleteResource = deleteResource
+                CreateApp = createApp
+                EditApp = editApp
+                DeleteApp = deleteApp
+                RunApp = runApp
+                CreateDashboard = createDashboard
+                EditDashboard = editDashboard
+                DeleteDashboard = deleteDashboard
+                RunDashboard = runDashboard
+                CreateFolder = createFolder
+                EditFolder = editFolder
+                DeleteFolder = deleteFolder
+            }
+            : SpacePermissionsDto)
     }
 
     let private getAccessibleSpaces (ctx: HttpContext) = task {
@@ -420,6 +458,7 @@ module Handlers =
                     |> List.sortBy (fun dashboard -> dashboard.Name.Value)
 
                 let! resources = allResourcesForSpace ctx space
+                let! permissions = getSpaceUiPermissions ctx space.Id
 
                 return!
                     writePage
@@ -432,7 +471,8 @@ module Handlers =
                             rootFolders
                             rootApps
                             rootDashboards
-                            resources)
+                            resources
+                            permissions)
             })
 
     let nodePage (spaceId: string) (nodeId: string) : EndpointHandler =
@@ -453,6 +493,7 @@ module Handlers =
                         let! folderApps = (apps ctx).GetByFolderIdAsync fid 0 Int32.MaxValue
                         let! folderDashboards = (dashboards ctx).GetByFolderIdAsync fid 0 Int32.MaxValue
                         let! folderResources = allResourcesForSpace ctx space
+                        let! permissions = getSpaceUiPermissions ctx space.Id
 
                         return!
                             writePage
@@ -470,7 +511,8 @@ module Handlers =
                                     (folderDashboards
                                      |> List.map (fun dashboard -> dashboard.State)
                                      |> List.sortBy (fun dashboard -> dashboard.Name.Value))
-                                    folderResources)
+                                    folderResources
+                                    permissions)
                     | Some _ ->
                         return!
                             writeStatus
@@ -559,6 +601,7 @@ module Handlers =
             requireSpace ctx spaceId (fun space -> task {
                 let! resourceList = allResourcesForSpace ctx space
                 let! appList = (apps ctx).GetBySpaceIdsAsync [ space.Id ] 0 Int32.MaxValue
+                let! permissions = getSpaceUiPermissions ctx space.Id
 
                 return!
                     writePage
@@ -569,7 +612,8 @@ module Handlers =
                             (UiContext.antiforgeryToken ctx)
                             space
                             resourceList
-                            (appList |> List.map (fun app -> ResponseSanitizer.sanitizeApp app.State)))
+                            (appList |> List.map (fun app -> ResponseSanitizer.sanitizeApp app.State))
+                            permissions)
             })
 
     let settingsPage (spaceId: string) : EndpointHandler =
@@ -718,12 +762,67 @@ module Handlers =
             match eventsResult with
             | Error message -> return! writeStatus ctx StatusCodes.Status400BadRequest "Invalid audit query" message
             | Ok result ->
-                let scopeText =
-                    match scope with
-                    | Some s -> Some $"Scope: {s}"
-                    | None -> None
+                let enhancementTasks =
+                    result.Items
+                    |> List.map (fun event -> (eventEnhancement ctx).EnhanceEventAsync event)
+                    |> List.toArray
 
-                return! writePage ctx "audit" "Audit" (Views.auditPage result.Items page result.TotalCount scopeText)
+                let! enhancedEvents = Task.WhenAll enhancementTasks
+
+                let! scopeText = task {
+                    match scope with
+                    | Some "user" ->
+                        match Guid.TryParse userId with
+                        | true, guid ->
+                            let userId = UserId.FromGuid guid
+                            let! user = (users ctx).GetByIdAsync userId
+
+                            return
+                                user
+                                |> Option.map (fun user ->
+                                    $"Showing audit events for {user.State.Name} ({user.State.Email}).")
+                                |> Option.orElse (Some $"Showing audit events for user {userId.Value}.")
+                        | _ -> return Some "Showing audit events for the selected user."
+                    | Some "app" ->
+                        match Guid.TryParse appId with
+                        | true, guid ->
+                            let appId = AppId.FromGuid guid
+                            let! app = (apps ctx).GetByIdAsync appId
+
+                            return
+                                app
+                                |> Option.map (fun app -> $"Showing audit events for app {app.State.Name}.")
+                                |> Option.orElse (Some $"Showing audit events for app {appId.Value}.")
+                        | _ -> return Some "Showing audit events for the selected app."
+                    | Some "dashboard" ->
+                        match Guid.TryParse dashboardId with
+                        | true, guid ->
+                            let dashboardId = DashboardId.FromGuid guid
+                            let! dashboard = (dashboards ctx).GetByIdAsync dashboardId
+
+                            return
+                                dashboard
+                                |> Option.map (fun dashboard ->
+                                    $"Showing audit events for dashboard {dashboard.State.Name.Value}.")
+                                |> Option.orElse (Some $"Showing audit events for dashboard {dashboardId.Value}.")
+                        | _ -> return Some "Showing audit events for the selected dashboard."
+                    | Some other -> return Some $"Showing audit events for scope {other}."
+                    | None -> return None
+                }
+
+                let baseHref =
+                    match scope with
+                    | Some "user" -> $"/audit?scope=user&userId={Uri.EscapeDataString userId}"
+                    | Some "app" -> $"/audit?scope=app&appId={Uri.EscapeDataString appId}"
+                    | Some "dashboard" -> $"/audit?scope=dashboard&dashboardId={Uri.EscapeDataString dashboardId}"
+                    | _ -> "/audit"
+
+                return!
+                    writePage
+                        ctx
+                        "audit"
+                        "Audit"
+                        (Views.auditPage (enhancedEvents |> Array.toList) page result.TotalCount scopeText baseHref)
         }
 
     let trashPage (spaceId: string) : EndpointHandler =
@@ -1273,6 +1372,109 @@ module Handlers =
                                     $"/spaces/{spaceId}/{folderId}"
                                     "error"
                                     (UiFormat.domainError error)
+        }
+
+    let deleteFolder (spaceId: string) (folderId: string) : EndpointHandler =
+        fun ctx -> task {
+            do! validatePost ctx
+
+            match tryFolderId folderId with
+            | None -> return! redirectBackToSpace ctx spaceId "error" "Invalid folder id."
+            | Some fid ->
+                let! folder = (folders ctx).GetByIdAsync fid
+
+                match folder with
+                | None -> return! redirectBackToSpace ctx spaceId "error" "Folder not found."
+                | Some folder when folder.State.SpaceId.Value.ToString() <> spaceId ->
+                    return! redirectBackToSpace ctx spaceId "error" "Folder not found in this space."
+                | Some folder ->
+                    let target =
+                        match folder.State.ParentId with
+                        | Some parentId -> $"/spaces/{spaceId}/{parentId.Value}"
+                        | None -> $"/spaces/{spaceId}"
+
+                    let! allowed = hasSpacePermission ctx folder.State.SpaceId AuthRelation.FolderDelete
+
+                    if not allowed then
+                        return! redirectWithFlash ctx target "error" "You do not have permission to delete folders."
+                    else
+                        let! result =
+                            (folderHandler ctx).HandleCommand(DeleteFolder(UiContext.actorUserId ctx, folderId))
+
+                        match result with
+                        | Ok(FolderUnitResult _) -> return! redirectWithFlash ctx target "success" "Folder deleted."
+                        | Error error -> return! redirectWithFlash ctx target "error" (UiFormat.domainError error)
+                        | _ -> return! redirectWithFlash ctx target "error" "Unexpected folder result."
+        }
+
+    let deleteApp (spaceId: string) (appId: string) : EndpointHandler =
+        fun ctx -> task {
+            do! validatePost ctx
+
+            match tryAppId appId with
+            | None -> return! redirectBackToSpace ctx spaceId "error" "Invalid app id."
+            | Some aid ->
+                let! app = (apps ctx).GetByIdAsync aid
+
+                match app with
+                | None -> return! redirectBackToSpace ctx spaceId "error" "App not found."
+                | Some app ->
+                    let target = $"/spaces/{spaceId}/{app.State.FolderId.Value}"
+                    let! owningSpace = getSpaceFromFolder ctx app.State.FolderId
+
+                    match owningSpace with
+                    | None -> return! redirectBackToSpace ctx spaceId "error" "App folder not found."
+                    | Some owningSpace when owningSpace.Id.Value.ToString() <> spaceId ->
+                        return! redirectBackToSpace ctx spaceId "error" "App not found in this space."
+                    | Some owningSpace ->
+                        let! allowed = hasSpacePermission ctx owningSpace.Id AuthRelation.AppDelete
+
+                        if not allowed then
+                            return! redirectWithFlash ctx target "error" "You do not have permission to delete apps."
+                        else
+                            let! result = (appHandler ctx).HandleCommand(DeleteApp(UiContext.actorUserId ctx, appId))
+
+                            match result with
+                            | Ok(AppUnitResult _) -> return! redirectWithFlash ctx target "success" "App deleted."
+                            | Error error -> return! redirectWithFlash ctx target "error" (UiFormat.domainError error)
+                            | _ -> return! redirectWithFlash ctx target "error" "Unexpected app result."
+        }
+
+    let deleteDashboard (spaceId: string) (dashboardId: string) : EndpointHandler =
+        fun ctx -> task {
+            do! validatePost ctx
+
+            match tryDashboardId dashboardId with
+            | None -> return! redirectBackToSpace ctx spaceId "error" "Invalid dashboard id."
+            | Some did ->
+                let! dashboard = (dashboards ctx).GetByIdAsync did
+
+                match dashboard with
+                | None -> return! redirectBackToSpace ctx spaceId "error" "Dashboard not found."
+                | Some dashboard ->
+                    let target = $"/spaces/{spaceId}/{dashboard.State.FolderId.Value}"
+                    let! owningSpace = getSpaceFromFolder ctx dashboard.State.FolderId
+
+                    match owningSpace with
+                    | None -> return! redirectBackToSpace ctx spaceId "error" "Dashboard folder not found."
+                    | Some owningSpace when owningSpace.Id.Value.ToString() <> spaceId ->
+                        return! redirectBackToSpace ctx spaceId "error" "Dashboard not found in this space."
+                    | Some owningSpace ->
+                        let! allowed = hasSpacePermission ctx owningSpace.Id AuthRelation.DashboardDelete
+
+                        if not allowed then
+                            return!
+                                redirectWithFlash ctx target "error" "You do not have permission to delete dashboards."
+                        else
+                            let! result =
+                                (dashboardHandler ctx)
+                                    .HandleCommand(DeleteDashboard(UiContext.actorUserId ctx, dashboardId))
+
+                            match result with
+                            | Ok(DashboardUnitResult()) ->
+                                return! redirectWithFlash ctx target "success" "Dashboard deleted."
+                            | Error error -> return! redirectWithFlash ctx target "error" (UiFormat.domainError error)
+                            | _ -> return! redirectWithFlash ctx target "error" "Unexpected dashboard result."
         }
 
     let createResource (spaceId: string) : EndpointHandler =

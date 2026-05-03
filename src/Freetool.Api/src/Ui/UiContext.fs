@@ -64,11 +64,31 @@ module UiContext =
         let requestUser = currentUserOption ctx
         let! devUsers = devUsers ctx
 
+        let! persistedUserName = task {
+            match requestUser |> Option.bind (fun user -> user.Name) with
+            | Some name when not (String.IsNullOrWhiteSpace name) -> return Some name
+            | _ ->
+                match requestUser |> Option.bind (fun user -> user.UserId) with
+                | None -> return None
+                | Some userId ->
+                    let! persistedUser = (userRepository ctx).GetByIdAsync userId
+
+                    return
+                        persistedUser
+                        |> Option.bind (fun user ->
+                            if String.IsNullOrWhiteSpace user.State.Name then
+                                None
+                            else
+                                Some user.State.Name)
+        }
+
+        let currentUserEmail = requestUser |> Option.map (fun user -> user.Email)
+
         return {
             Active = active
             Title = title
-            CurrentUserName = requestUser |> Option.bind (fun user -> user.Name)
-            CurrentUserEmail = requestUser |> Option.map (fun user -> user.Email)
+            CurrentUserName = persistedUserName |> Option.orElse currentUserEmail
+            CurrentUserEmail = currentUserEmail
             IsDevMode = isDevMode ()
             DevUsers = devUsers
             ReturnUrl = returnUrl ctx

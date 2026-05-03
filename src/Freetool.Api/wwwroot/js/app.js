@@ -24,6 +24,23 @@
       return;
     }
 
+    const modalOpen = closest(target, "[data-modal-open]");
+    if (modalOpen) {
+      event.preventDefault();
+      const modalId = modalOpen.getAttribute("data-modal-open");
+      const modal = modalId ? document.getElementById(modalId) : null;
+      if (modal && typeof modal.showModal === "function") modal.showModal();
+      return;
+    }
+
+    const modalClose = closest(target, "[data-modal-close]");
+    if (modalClose) {
+      event.preventDefault();
+      const modal = modalClose.closest("dialog");
+      if (modal && typeof modal.close === "function") modal.close();
+      return;
+    }
+
     const confirmElement = closest(target, "[data-confirm]");
     if (confirmElement) {
       const message = confirmElement.getAttribute("data-confirm") || "Are you sure?";

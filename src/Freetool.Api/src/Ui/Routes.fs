@@ -32,15 +32,18 @@ module Routes =
             routef "/_ui/spaces/{%s}/delete" Handlers.deleteSpace
             routef "/_ui/spaces/{%s}/folders/create" Handlers.createFolder
             routef "/_ui/spaces/{%s}/folders/{%s}/rename" Handlers.renameFolder
+            routef "/_ui/spaces/{%s}/folders/{%s}/delete" Handlers.deleteFolder
             routef "/_ui/spaces/{%s}/resources/create" Handlers.createResource
             routef "/_ui/spaces/{%s}/resources/{%s}/delete" Handlers.deleteResource
             routef "/_ui/spaces/{%s}/apps/create" Handlers.createApp
+            routef "/_ui/spaces/{%s}/apps/{%s}/delete" Handlers.deleteApp
             routef "/_ui/spaces/{%s}/apps/{%s}/name" Handlers.updateAppName
             routef "/_ui/spaces/{%s}/apps/{%s}/description" Handlers.updateAppDescription
             routef "/_ui/spaces/{%s}/apps/{%s}/config" Handlers.updateAppConfig
             routef "/_ui/spaces/{%s}/apps/{%s}/run" Handlers.runApp
             routef "/spaces/{%s}/{%s}/run" Handlers.runApp
             routef "/_ui/spaces/{%s}/dashboards/create" Handlers.createDashboard
+            routef "/_ui/spaces/{%s}/dashboards/{%s}/delete" Handlers.deleteDashboard
             routef "/_ui/spaces/{%s}/dashboards/{%s}/name" Handlers.updateDashboardName
             routef "/_ui/spaces/{%s}/dashboards/{%s}/config" Handlers.updateDashboardConfig
             routef "/_ui/spaces/{%s}/dashboards/{%s}/prepare" Handlers.prepareDashboard
