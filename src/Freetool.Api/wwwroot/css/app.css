@@ -84,6 +84,28 @@ textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, m
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: .75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { color: var(--muted); font-size: .85rem; }
+.detached-form { display: none; }
+.permissions-matrix-wrap { border: 1px solid var(--border); border-radius: 12px; }
+.permissions-table { min-width: 1120px; border-collapse: separate; border-spacing: 0; }
+.permissions-table th, .permissions-table td { text-align: center; vertical-align: middle; }
+.permissions-table th { background: var(--surface); }
+.permissions-table .member-column { position: sticky; left: 0; z-index: 2; width: 280px; min-width: 280px; max-width: 280px; text-align: left; background: var(--surface); box-shadow: 1px 0 0 var(--border); }
+.permissions-table thead .member-column { z-index: 4; }
+.permissions-table .actions-column { width: 150px; min-width: 150px; text-align: left; }
+.permission-group-header { border-left: 1px solid var(--border); color: #334155; font-weight: 800; }
+.permission-column-header { white-space: nowrap; font-size: .78rem; }
+.permission-group-start { border-left: 1px solid var(--border); }
+.permission-cell { padding: .65rem .5rem; }
+.permission-matrix-checkbox { width: 1rem; height: 1rem; margin: 0 auto; cursor: pointer; }
+.permission-matrix-checkbox:disabled { cursor: not-allowed; }
+.permission-row-inherited td { background: #f8fafc; color: var(--muted); }
+.permission-row-inherited .member-column { background: #f8fafc; }
+.member-summary { display: flex; align-items: center; gap: .75rem; min-width: 0; }
+.member-summary-text { display: grid; gap: .15rem; min-width: 0; }
+.member-summary-text strong { overflow-wrap: anywhere; }
+.member-email { color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
+.role-badges, .matrix-actions, .permissions-legend { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
+.permissions-legend { margin-top: .9rem; color: var(--muted); font-size: .9rem; }
 .code-block { padding: 1rem; border-radius: 12px; overflow: auto; background: #0f172a; color: #e2e8f0; }
 .resource-icon { width: 40px; height: 40px; object-fit: contain; }
 .audit-card { display: grid; gap: .75rem; }
