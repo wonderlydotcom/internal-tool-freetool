@@ -2,18 +2,14 @@
 from __future__ import annotations
 
 import argparse
-import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
-from typing import Iterable
+from typing import Callable, Iterable
 
 BACKEND_SOURCE_EXTENSIONS = {".cs", ".fs"}
-FRONTEND_SOURCE_EXTENSIONS = {".js", ".jsx", ".ts", ".tsx"}
-FRONTEND_IGNORED_FILE_NAMES = {"schema.d.ts", "setupTests.ts", "vite-env.d.ts"}
-FRONTEND_IMPORT_LIST_ITEM = re.compile(r"^(type\s+)?[A-Za-z_$][\w$]*,$")
-HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<new_start>\d+)(?:,\d+)? @@")
+HUNK_HEADER_PREFIX = "@@ "
 
 
 def repository_root() -> Path:
@@ -32,47 +28,14 @@ def is_backend_source_file(relative_path: str) -> bool:
     path = PurePosixPath(relative_path)
     return (
         relative_path.startswith("src/")
+        and not relative_path.startswith("src/Freetool.Api/src/Ui/")
         and path.suffix.lower() in BACKEND_SOURCE_EXTENSIONS
         and path.name.lower() not in {"program.fs", "program.cs"}
         and "test" not in {part.lower() for part in path.parts}
     )
 
 
-def is_frontend_source_file(relative_path: str) -> bool:
-    path = PurePosixPath(relative_path)
-
-    if not relative_path.startswith("www/src/"):
-        return False
-
-    if path.suffix.lower() not in FRONTEND_SOURCE_EXTENSIONS:
-        return False
-
-    if path.name in FRONTEND_IGNORED_FILE_NAMES:
-        return False
-
-    return ".test." not in path.name and ".spec." not in path.name
-
-
-def resolve_repo_relative_path(candidate: str, repo_root: Path) -> str:
-    normalized = normalize_changed_path(candidate)
-
-    if normalized.startswith("www/src/"):
-        return normalized
-
-    absolute_candidate = Path(candidate)
-    if absolute_candidate.is_absolute():
-        try:
-            return to_posix_path(absolute_candidate.resolve().relative_to(repo_root))
-        except ValueError:
-            return to_posix_path(absolute_candidate.resolve())
-
-    if normalized.startswith("src/"):
-        return f"www/{normalized}"
-
-    return normalized
-
-
-def selected_changed_files(changed_files: Iterable[str], predicate) -> list[str]:
+def selected_changed_files(changed_files: Iterable[str], predicate: Callable[[str], bool]) -> list[str]:
     return sorted(
         {
             normalized
@@ -115,71 +78,26 @@ def is_blank_or_comment(stripped_line: str) -> bool:
     )
 
 
-def iter_diff_hunks(diff_lines: list[str]) -> Iterable[tuple[str, list[str]]]:
-    current_header: str | None = None
+def iter_diff_hunks(diff_lines: list[str]) -> Iterable[tuple[int, list[str]]]:
+    current_start: int | None = None
     current_body: list[str] = []
 
     for diff_line in diff_lines:
-        if diff_line.startswith("@@ "):
-            if current_header is not None:
-                yield current_header, current_body
-            current_header = diff_line
+        if diff_line.startswith(HUNK_HEADER_PREFIX):
+            if current_start is not None:
+                yield current_start, current_body
+
+            header_parts = diff_line.split()
+            new_range = next(part for part in header_parts if part.startswith("+"))
+            current_start = int(new_range[1:].split(",", 1)[0])
             current_body = []
             continue
 
-        if current_header is not None:
+        if current_start is not None:
             current_body.append(diff_line)
 
-    if current_header is not None:
-        yield current_header, current_body
-
-
-def frontend_import_hunk_line(stripped_line: str) -> bool:
-    return (
-        stripped_line.startswith("import ")
-        or stripped_line.startswith("from ")
-        or stripped_line.startswith("} from ")
-        or stripped_line in {"{", "}"}
-        or FRONTEND_IMPORT_LIST_ITEM.match(stripped_line) is not None
-    )
-
-
-def frontend_hunk_is_import_like(hunk_lines: list[str]) -> bool:
-    changed_lines = [
-        diff_line[1:].strip()
-        for diff_line in hunk_lines
-        if diff_line and diff_line[0] in {"+", "-"}
-    ]
-
-    if any(
-        diff_line
-        and diff_line[0] in {" ", "+", "-"}
-        and (
-            diff_line[1:].strip().startswith("import ")
-            or " from " in diff_line[1:]
-        )
-        for diff_line in hunk_lines
-    ):
-        return True
-
-    return bool(changed_lines) and all(
-        frontend_import_hunk_line(stripped)
-        or stripped.startswith(("type ", "interface ", "export type "))
-        for stripped in changed_lines
-    )
-
-
-def frontend_line_is_meaningful(stripped_line: str, import_like_hunk: bool) -> bool:
-    if is_blank_or_comment(stripped_line):
-        return False
-
-    if stripped_line.startswith(("type ", "interface ", "export type ")):
-        return False
-
-    if import_like_hunk and frontend_import_hunk_line(stripped_line):
-        return False
-
-    return True
+    if current_start is not None:
+        yield current_start, current_body
 
 
 def backend_line_is_meaningful(line: str) -> bool:
@@ -199,7 +117,6 @@ def collect_changed_line_numbers(
     target_files: list[str],
     diff_base: str,
     repo_root: Path,
-    label: str,
 ) -> dict[str, set[int]]:
     files_requiring_coverage: dict[str, set[int]] = {}
     ignored_files: list[str] = []
@@ -208,13 +125,8 @@ def collect_changed_line_numbers(
         diff_lines = read_diff(relative_path, diff_base, repo_root)
         changed_lines: set[int] = set()
 
-        for header, hunk_lines in iter_diff_hunks(diff_lines):
-            match = HUNK_HEADER.match(header)
-            if match is None:
-                continue
-
-            new_line_number = int(match.group("new_start"))
-            import_like_hunk = label == "frontend" and frontend_hunk_is_import_like(hunk_lines)
+        for new_start, hunk_lines in iter_diff_hunks(diff_lines):
+            new_line_number = new_start
 
             for diff_line in hunk_lines:
                 if not diff_line or diff_line.startswith(("diff --git", "index ", "--- ", "+++ ")):
@@ -230,14 +142,7 @@ def collect_changed_line_numbers(
                 if diff_line[0] != "+":
                     continue
 
-                stripped = diff_line[1:].strip()
-                is_meaningful = (
-                    frontend_line_is_meaningful(stripped, import_like_hunk)
-                    if label == "frontend"
-                    else backend_line_is_meaningful(diff_line[1:])
-                )
-
-                if is_meaningful:
+                if backend_line_is_meaningful(diff_line[1:]):
                     changed_lines.add(new_line_number)
 
                 new_line_number += 1
@@ -248,7 +153,7 @@ def collect_changed_line_numbers(
             ignored_files.append(relative_path)
 
     if ignored_files:
-        print(f"Skipping {label} coverage enforcement for non-runtime-only diffs:")
+        print("Skipping backend coverage enforcement for non-runtime-only diffs:")
         for relative_path in ignored_files:
             print(f"  - {relative_path}")
 
@@ -300,48 +205,19 @@ def parse_backend_reports(report_paths: list[str], repo_root: Path) -> dict[str,
     return file_lines
 
 
-def parse_frontend_lcov(report_path: str, repo_root: Path) -> dict[str, dict[int, bool]]:
-    file_lines: dict[str, dict[int, bool]] = {}
-    current_file: str | None = None
-
-    with open(report_path, encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-
-            if line.startswith("SF:"):
-                current_file = resolve_repo_relative_path(line[3:], repo_root)
-                file_lines.setdefault(current_file, {})
-                continue
-
-            if line == "end_of_record":
-                current_file = None
-                continue
-
-            if current_file is None or not line.startswith("DA:"):
-                continue
-
-            line_number_text, hits_text = line[3:].split(",", 1)
-            line_number = int(line_number_text)
-            covered = int(hits_text) > 0
-            file_lines[current_file][line_number] = file_lines[current_file].get(line_number, False) or covered
-
-    return file_lines
-
-
 def check_threshold(
     changed_lines_by_file: dict[str, set[int]],
     coverage_by_file: dict[str, dict[int, bool]],
     threshold: float,
-    label: str,
 ) -> int:
     if not changed_lines_by_file:
-        print(f"No changed {label} source files require coverage enforcement; skipping threshold check.")
+        print("No changed backend source files require coverage enforcement; skipping threshold check.")
         return 0
 
     target_files = sorted(changed_lines_by_file)
     missing_files = [path for path in target_files if path not in coverage_by_file]
     if missing_files:
-        print(f"Coverage data did not include these changed {label} source files:")
+        print("Coverage data did not include these changed backend source files:")
         for path in missing_files:
             print(f"  - {path}")
         return 1
@@ -368,32 +244,29 @@ def check_threshold(
         per_file_results.append((path, covered_lines, len(executable_lines)))
 
     if files_without_executable_lines:
-        print(f"Skipping changed {label} lines that were not executable according to the coverage report:")
+        print("Skipping changed backend lines that were not executable according to the coverage report:")
         for path in files_without_executable_lines:
             print(f"  - {path}")
 
     if total_lines == 0:
-        print(f"Changed {label} source files had no executable lines in the coverage report; skipping threshold check.")
+        print("Changed backend source files had no executable lines in the coverage report; skipping threshold check.")
         return 0
 
     percent = total_covered / total_lines * 100.0
-    print(f"Changed {label} line coverage: {percent:.2f}% ({total_covered}/{total_lines})")
+    print(f"Changed backend line coverage: {percent:.2f}% ({total_covered}/{total_lines})")
 
     if percent + 1e-9 >= threshold:
         return 0
 
-    print(f"{label.capitalize()} coverage is below the required {threshold:.2f}% threshold.")
+    print(f"Backend coverage is below the required {threshold:.2f}% threshold.")
     for path, covered_lines, line_count in per_file_results:
-        percent = covered_lines / line_count * 100.0
-        print(
-            f"  - {path}: {percent:.2f}% "
-            f"({covered_lines}/{line_count})"
-        )
+        file_percent = covered_lines / line_count * 100.0
+        print(f"  - {path}: {file_percent:.2f}% ({covered_lines}/{line_count})")
     return 1
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Check coverage for changed files.")
+    parser = argparse.ArgumentParser(description="Check coverage for changed backend files.")
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
     backend = subparsers.add_parser("backend")
@@ -401,12 +274,6 @@ def build_parser() -> argparse.ArgumentParser:
     backend.add_argument("--changed-file", action="append", default=[], dest="changed_files")
     backend.add_argument("--diff-base", required=True)
     backend.add_argument("--threshold", type=float, required=True)
-
-    frontend = subparsers.add_parser("frontend")
-    frontend.add_argument("--lcov", required=True)
-    frontend.add_argument("--changed-file", action="append", default=[], dest="changed_files")
-    frontend.add_argument("--diff-base", required=True)
-    frontend.add_argument("--threshold", type=float, required=True)
 
     return parser
 
@@ -418,15 +285,9 @@ def main() -> int:
 
     if args.mode == "backend":
         target_files = selected_changed_files(args.changed_files, is_backend_source_file)
-        changed_lines_by_file = collect_changed_line_numbers(target_files, args.diff_base, repo_root, "backend")
+        changed_lines_by_file = collect_changed_line_numbers(target_files, args.diff_base, repo_root)
         coverage_by_file = parse_backend_reports(args.reports, repo_root)
-        return check_threshold(changed_lines_by_file, coverage_by_file, args.threshold, "backend")
-
-    if args.mode == "frontend":
-        target_files = selected_changed_files(args.changed_files, is_frontend_source_file)
-        changed_lines_by_file = collect_changed_line_numbers(target_files, args.diff_base, repo_root, "frontend")
-        coverage_by_file = parse_frontend_lcov(args.lcov, repo_root)
-        return check_threshold(changed_lines_by_file, coverage_by_file, args.threshold, "frontend")
+        return check_threshold(changed_lines_by_file, coverage_by_file, args.threshold)
 
     parser.error(f"Unsupported mode: {args.mode}")
     return 2

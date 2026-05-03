@@ -1,16 +1,4 @@
 services:
-  freetool-frontend:
-    build:
-      context: ./www
-      dockerfile: Dockerfile.dev
-    ports:
-      - "8081:8081"
-    environment:
-      VITE_DEV_MODE: "true"
-      VITE_API_URL: "http://freetool-api:8080"
-    depends_on:
-      - freetool-api
-
   freetool-api:
     build:
       context: .
