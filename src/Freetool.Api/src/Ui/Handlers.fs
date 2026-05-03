@@ -56,9 +56,11 @@ module Handlers =
             not (String.IsNullOrWhiteSpace key) && not (String.IsNullOrWhiteSpace value))
         |> List.map (fun (key, value) -> { Key = key; Value = value })
 
-    let private permissionsFromForm (form: IFormCollection) : SpacePermissionsDto =
+    let private permissionFieldForUser (field: string) (userId: string) = $"{field}:{userId}"
+
+    let private permissionsFromFormFields (fieldName: string -> string) (form: IFormCollection) : SpacePermissionsDto =
         let isChecked field =
-            formValues form field |> List.isEmpty |> not
+            formValues form (fieldName field) |> List.isEmpty |> not
 
         {
             CreateResource = isChecked "CreateResource"
@@ -76,6 +78,11 @@ module Handlers =
             EditFolder = isChecked "EditFolder"
             DeleteFolder = isChecked "DeleteFolder"
         }
+
+    let private permissionsFromForm (form: IFormCollection) : SpacePermissionsDto = permissionsFromFormFields id form
+
+    let private permissionsForUserFromForm (form: IFormCollection) (userId: string) : SpacePermissionsDto =
+        permissionsFromFormFields (fun field -> permissionFieldForUser field userId) form
 
     let private service<'T> (ctx: HttpContext) =
         ctx.RequestServices.GetRequiredService<'T>()
@@ -1182,29 +1189,57 @@ module Handlers =
                             "error"
                             "Only admins or moderators can update permissions."
                 else
-                    let userId = formValue posted "UserId"
-                    let permissions = permissionsFromForm posted
+                    let updates =
+                        match formValues posted "UserIds" |> List.distinct with
+                        | [] ->
+                            let userId = formValue posted "UserId"
 
-                    let! result =
-                        (spaceHandler ctx)
-                            .HandleCommand(
-                                UpdateUserPermissions(
-                                    UiContext.actorUserId ctx,
-                                    spaceId,
-                                    {
-                                        UserId = userId
-                                        Permissions = permissions
-                                    }
-                                )
-                            )
+                            if String.IsNullOrWhiteSpace userId then
+                                []
+                            else
+                                [ userId, permissionsFromForm posted ]
+                        | userIds ->
+                            userIds
+                            |> List.map (fun userId -> userId, permissionsForUserFromForm posted userId)
 
-                    match result with
-                    | Ok _ ->
+                    if List.isEmpty updates then
                         return!
-                            redirectWithFlash ctx $"/spaces/{spaceId}/settings" "success" "Member permissions updated."
-                    | Error error ->
-                        return!
-                            redirectWithFlash ctx $"/spaces/{spaceId}/settings" "error" (UiFormat.domainError error)
+                            redirectWithFlash
+                                ctx
+                                $"/spaces/{spaceId}/settings"
+                                "error"
+                                "No member permissions were submitted."
+                    else
+                        let mutable errors = []
+
+                        for userId, permissions in updates do
+                            let! result =
+                                (spaceHandler ctx)
+                                    .HandleCommand(
+                                        UpdateUserPermissions(
+                                            UiContext.actorUserId ctx,
+                                            spaceId,
+                                            {
+                                                UserId = userId
+                                                Permissions = permissions
+                                            }
+                                        )
+                                    )
+
+                            match result with
+                            | Ok _ -> ()
+                            | Error error -> errors <- UiFormat.domainError error :: errors
+
+                        match errors |> List.rev with
+                        | [] ->
+                            return!
+                                redirectWithFlash
+                                    ctx
+                                    $"/spaces/{spaceId}/settings"
+                                    "success"
+                                    "Member permissions updated."
+                        | firstError :: _ ->
+                            return! redirectWithFlash ctx $"/spaces/{spaceId}/settings" "error" firstError
             })
 
     let updateDefaultMemberPermissions (spaceId: string) : EndpointHandler =
