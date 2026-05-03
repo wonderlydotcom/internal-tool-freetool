@@ -82,7 +82,7 @@ module LayoutView =
 
                         div (class' = "sidebar-footer") {
                             p (class' = "eyebrow") { "Signed in" }
-                            strong () { model.CurrentUserName |> Option.defaultValue "Unknown user" }
+                            strong () { model.CurrentUserName |> Option.defaultValue "Not signed in" }
                             small () { model.CurrentUserEmail |> Option.defaultValue "" }
                         }
                     }
