@@ -47,6 +47,10 @@ let addHeader (context: HttpContext) (key: string) (value: string) =
     context.Request.Headers.[key] <- StringValues(value)
     context
 
+let addCookie (context: HttpContext) (key: string) (value: string) =
+    context.Request.Headers.Cookie <- StringValues($"{key}={value}")
+    context
+
 let setPath (context: HttpContext) (path: string) =
     context.Request.Path <- PathString(path)
     context
@@ -133,6 +137,116 @@ let ``Returns 401 when X-Dev-User-Id header missing`` () : Task = task {
     Assert.False(wasNextCalled ())
 
     Assert.Equal("missing_dev_user_id_header", getResponseCode context)
+}
+
+[<Fact>]
+let ``Redirects hosted UI pages to dev picker when identity missing`` () : Task = task {
+    // Arrange
+    let context = createTestHttpContext () |> fun c -> setPath c "/spaces"
+
+    context.Request.QueryString <- QueryString("?view=list")
+
+    let userRepo = MockUserRepository(Map.empty)
+    setupServices context userRepo |> ignore
+
+    let middleware, wasNextCalled = createMiddleware ()
+
+    // Act
+    do! middleware.InvokeAsync(context)
+
+    // Assert
+    Assert.Equal(303, context.Response.StatusCode)
+    Assert.False(wasNextCalled ())
+    Assert.StartsWith("/dev/select-user?returnUrl=", context.Response.Headers.Location.ToString())
+    Assert.Contains(Uri.EscapeDataString("/spaces?view=list"), context.Response.Headers.Location.ToString())
+}
+
+[<Fact>]
+let ``Redirects unknown hosted UI paths to dev picker when identity missing`` () : Task = task {
+    // Arrange
+    let context = createTestHttpContext () |> fun c -> setPath c "/unknown-hosted-path"
+
+    let userRepo = MockUserRepository(Map.empty)
+    setupServices context userRepo |> ignore
+
+    let middleware, wasNextCalled = createMiddleware ()
+
+    // Act
+    do! middleware.InvokeAsync(context)
+
+    // Assert
+    Assert.Equal(303, context.Response.StatusCode)
+    Assert.False(wasNextCalled ())
+}
+
+[<Fact>]
+let ``Allows static hosted UI assets without authentication`` () : Task = task {
+    // Arrange
+    let context =
+        createTestHttpContext () |> fun c -> setPath c "/vendor/datastar/datastar.js"
+
+    let userRepo = MockUserRepository(Map.empty)
+    setupServices context userRepo |> ignore
+
+    let middleware, wasNextCalled = createMiddleware ()
+
+    // Act
+    do! middleware.InvokeAsync(context)
+
+    // Assert
+    Assert.True(wasNextCalled ())
+    Assert.NotEqual(401, context.Response.StatusCode)
+}
+
+[<Fact>]
+let ``Returns 401 for machine API route without identity`` () : Task = task {
+    // Arrange
+    let context =
+        createTestHttpContext ()
+        |> fun c -> setPath c "/audit/dashboard/some-dashboard/events"
+
+    let userRepo = MockUserRepository(Map.empty)
+    setupServices context userRepo |> ignore
+
+    let middleware, wasNextCalled = createMiddleware ()
+
+    // Act
+    do! middleware.InvokeAsync(context)
+
+    // Assert
+    Assert.Equal(401, context.Response.StatusCode)
+    Assert.False(wasNextCalled ())
+    Assert.Equal("missing_dev_user_id_header", getResponseCode context)
+}
+
+[<Fact>]
+let ``Authenticates hosted UI requests with dev user cookie`` () : Task = task {
+    // Arrange
+    let userId = UserId.NewId()
+    let user = createValidUser userId "cookie@example.com" "Cookie User"
+
+    let context =
+        createTestHttpContext ()
+        |> fun c -> setPath c "/spaces"
+        |> fun c -> addCookie c "freetool_dev_user_id" (userId.Value.ToString())
+
+    let userRepo = MockUserRepository(Map.ofList [ (userId, user) ])
+    setupServices context userRepo |> ignore
+
+    let middleware, wasNextCalled = createMiddleware ()
+
+    // Act
+    do! middleware.InvokeAsync(context)
+
+    // Assert
+    Assert.True(wasNextCalled ())
+    Assert.Equal(200, context.Response.StatusCode)
+
+    match RequestUserContext.tryGet context with
+    | None -> failwith "Expected request user context"
+    | Some requestUser ->
+        Assert.Equal(Some userId, requestUser.UserId)
+        Assert.Equal("cookie@example.com", requestUser.Email)
 }
 
 [<Fact>]

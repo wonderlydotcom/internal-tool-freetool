@@ -9,6 +9,7 @@ open Microsoft.EntityFrameworkCore
 open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.StaticFiles
 open System.Text.Json.Serialization
+open Oxpecker
 open System.Diagnostics
 open System
 open OpenTelemetry.Exporter
@@ -237,7 +238,7 @@ let main args =
     if isDevMode then
         startupLogger.LogInformation("[DEV MODE] Running in development mode with user impersonation")
 
-    // Add CORS for dev mode (allows frontend on different port)
+    // Add CORS for dev mode (allows local tools to call JSON APIs)
     if isDevMode then
         builder.Services.AddCors(fun options ->
             options.AddPolicy(
@@ -279,6 +280,9 @@ let main args =
             // allowOverride = true lets type-level [<JsonFSharpConverter>] attributes take precedence
             options.JsonSerializerOptions.Converters.Add(JsonFSharpConverter(allowOverride = true)))
     |> ignore
+
+    builder.Services.AddOxpecker() |> ignore
+    builder.Services.AddAntiforgery() |> ignore
 
     builder.Services.AddEndpointsApiExplorer() |> ignore
 
@@ -605,6 +609,8 @@ let main args =
         options.SwaggerEndpoint("/openapi/v1.json", "freetool v1"))
     |> ignore
 
+    app.UseAntiforgery() |> ignore
+
     app.MapGet("/healthy", Func<IResult>(fun () -> Results.Ok())) |> ignore
 
     app.MapGet(
@@ -627,7 +633,23 @@ let main args =
 
     app.MapControllers() |> ignore
 
-    app.MapFallbackToFile("index.html") |> ignore
+    app.MapOxpeckerEndpoints(Freetool.Api.Ui.Routes.endpoints) |> ignore
+
+    app.MapFallback(
+        Func<HttpContext, System.Threading.Tasks.Task>(fun context -> task {
+            context.Response.StatusCode <- StatusCodes.Status404NotFound
+
+            return!
+                context.WriteHtmlView(
+                    Freetool.Api.Ui.LayoutView.statusPage
+                        "Not found"
+                        "That page does not exist."
+                        None
+                        StatusCodes.Status404NotFound
+                )
+        })
+    )
+    |> ignore
 
     app.Run()
     0

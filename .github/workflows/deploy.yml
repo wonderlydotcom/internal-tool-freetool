@@ -52,13 +52,6 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: www/package-lock.json
-
       - name: Set up OpenTofu
         run: scripts/setup-opentofu.sh
 
@@ -81,10 +74,6 @@ jobs:
 
       - name: Restore backend
         run: dotnet restore Freetool.sln
-
-      - name: Install frontend dependencies
-        working-directory: www
-        run: npm ci
 
       - name: Init OpenTofu backend
         run: |

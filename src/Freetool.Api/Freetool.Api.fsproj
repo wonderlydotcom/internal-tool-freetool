@@ -7,6 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Oxpecker" Version="2.0.0" />
+    <PackageReference Include="StarFederation.Datastar.FSharp" Version="1.3.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="7.2.0" />
     <PackageReference Include="FSharp.SystemTextJson" Version="1.3.13" />
     <PackageReference Include="OpenTelemetry" Version="1.15.3" />
@@ -58,6 +60,15 @@
     <Compile Include="src/Controllers/IdentityProvisioningController.fs" />
     <Compile Include="src/Controllers/DevController.fs" />
     <Compile Include="src/Services/DevSeedingService.fs" />
+    <Compile Include="src/Ui/UiModels.fs" />
+    <Compile Include="src/Ui/UiContext.fs" />
+    <Compile Include="src/Ui/UiFormat.fs" />
+    <Compile Include="src/Ui/UiHtml.fs" />
+    <Compile Include="src/Ui/LayoutView.fs" />
+    <Compile Include="src/Ui/Views.fs" />
+    <Compile Include="src/Ui/DatastarResponse.fs" />
+    <Compile Include="src/Ui/Handlers.fs" />
+    <Compile Include="src/Ui/Routes.fs" />
     <Compile Include="src/AppTelemetry.fs" />
     <Compile Include="src/Program.fs" />
   </ItemGroup>

@@ -13,8 +13,6 @@ TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/signoff-pr.XXXXXX")"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 BACKEND_COVERAGE_THRESHOLD="${SIGNOFF_BACKEND_COVERAGE_THRESHOLD:-90}"
-FRONTEND_COVERAGE_THRESHOLD="${SIGNOFF_FRONTEND_COVERAGE_THRESHOLD:-90}"
-FRONTEND_RUNNER=()
 DOCKER_COMPOSE_CMD=()
 
 run_step() {
@@ -36,14 +34,6 @@ require_cmd() {
 
   echo "$message"
   exit 1
-}
-
-ensure_bun_available() {
-  require_cmd bun "Frontend checks require 'bun' in PATH."
-}
-
-ensure_npm_available() {
-  require_cmd npm "Frontend checks require 'npm' in PATH."
 }
 
 ensure_ruby_available() {
@@ -76,16 +66,6 @@ ensure_tracked_status_unchanged() {
   exit 1
 }
 
-run_in_repo_subdir() {
-  local relative_dir="$1"
-  shift
-
-  (
-    cd "$ROOT_DIR/$relative_dir"
-    "$@"
-  )
-}
-
 resolve_solution_file() {
   local solutions=()
   local solution
@@ -105,51 +85,6 @@ resolve_solution_file() {
   done
 
   echo "${solutions[0]}"
-}
-
-ensure_www_node_modules() {
-  if [ ! -d "$ROOT_DIR/www" ] || [ -d "$ROOT_DIR/www/node_modules" ]; then
-    return
-  fi
-
-  if ! command -v npm >/dev/null 2>&1; then
-    echo "Frontend checks require 'npm' in PATH."
-    exit 1
-  fi
-
-  echo
-  echo "==> Installing frontend dependencies"
-  (
-    cd "$ROOT_DIR/www"
-    npm install
-  )
-}
-
-ensure_frontend_runner() {
-  if [ "${#FRONTEND_RUNNER[@]}" -gt 0 ]; then
-    return
-  fi
-
-  if [ -f "$ROOT_DIR/www/bun.lock" ] || [ -f "$ROOT_DIR/www/bun.lockb" ]; then
-    ensure_bun_available
-    FRONTEND_RUNNER=(bun run)
-    return
-  fi
-
-  ensure_npm_available
-  FRONTEND_RUNNER=(npm run)
-}
-
-run_frontend_script() {
-  local script="$1"
-  shift
-
-  ensure_frontend_runner
-
-  (
-    cd "$ROOT_DIR/www"
-    "${FRONTEND_RUNNER[@]}" "$script" "$@"
-  )
 }
 
 resolve_docker_compose_cmd() {
@@ -273,21 +208,6 @@ validate_tofu_root() {
   TF_DATA_DIR="$data_dir" tofu -chdir="$root" validate
 }
 
-validate_frontend_schema() {
-  local generated_schema="$TMP_ROOT/schema.d.ts"
-
-  run_in_repo_subdir www ./node_modules/.bin/openapi-typescript ../openapi.spec.json -o "$generated_schema" >/dev/null
-  run_in_repo_subdir www ./node_modules/.bin/biome format "$generated_schema" --write >/dev/null
-
-  if cmp -s www/src/schema.d.ts "$generated_schema"; then
-    return
-  fi
-
-  echo "Checked-in www/src/schema.d.ts is stale. Regenerate it and commit the result."
-  diff -u www/src/schema.d.ts "$generated_schema" || true
-  exit 1
-}
-
 validate_backend_changed_coverage() {
   local results_dir="$1"
   local reports=()
@@ -303,22 +223,6 @@ validate_backend_changed_coverage() {
   for report in "${reports[@]}"; do
     args+=(--report "$report")
   done
-
-  for file in "${CHANGED_FILES[@]}"; do
-    args+=(--changed-file "$file")
-  done
-
-  PYTHONPYCACHEPREFIX="$TMP_ROOT/python-pycache" python3 scripts/check_changed_coverage.py "${args[@]}"
-}
-
-validate_frontend_changed_coverage() {
-  local lcov_path="$1/lcov.info"
-  local args=(frontend --threshold "$FRONTEND_COVERAGE_THRESHOLD" --lcov "$lcov_path" --diff-base "$DIFF_BASE_REF")
-
-  if [ ! -f "$lcov_path" ]; then
-    echo "Frontend LCOV report was not produced at $lcov_path."
-    exit 1
-  fi
 
   for file in "${CHANGED_FILES[@]}"; do
     args+=(--changed-file "$file")
@@ -531,13 +435,11 @@ mapfile -t CHANGED_FILES < <(
 CHANGED_FILES_TEXT="$(printf '%s\n' "${CHANGED_FILES[@]}")"
 
 RUN_BACKEND=false
-RUN_FRONTEND=false
 RUN_INFRA=false
 RUN_WORKFLOW_VALIDATION=false
 RUN_YAML_VALIDATION=false
 RUN_SHELL_VALIDATION=false
 RUN_PYTHON_VALIDATION=false
-RUN_CONTRACT_VALIDATION=false
 
 CHANGED_WORKFLOW_FILES=()
 mapfile -t CHANGED_WORKFLOW_FILES < <(
@@ -568,9 +470,6 @@ if grep -qE '^(src/|scripts/signoff-pr\.sh$|scripts/check_changed_coverage\.py$|
   RUN_BACKEND=true
 fi
 
-if grep -qE '^(www/|openapi\.spec\.json$)' <<<"$CHANGED_FILES_TEXT"; then
-  RUN_FRONTEND=true
-fi
 
 if grep -qE '^infra/' <<<"$CHANGED_FILES_TEXT"; then
   RUN_INFRA=true
@@ -592,15 +491,6 @@ if [ "${#CHANGED_PYTHON_FILES[@]}" -gt 0 ]; then
   RUN_PYTHON_VALIDATION=true
 fi
 
-if grep -qE '^(openapi\.spec\.json$|www/src/schema\.d\.ts$|www/package\.json$|www/package-lock\.json$|www/bun\.lockb?$)' <<<"$CHANGED_FILES_TEXT"; then
-  RUN_CONTRACT_VALIDATION=true
-fi
-
-if [ "$RUN_FRONTEND" = true ] || [ "$RUN_CONTRACT_VALIDATION" = true ]; then
-  ensure_frontend_runner
-fi
-
-ensure_www_node_modules
 VALIDATION_TRACKED_STATUS="$(capture_tracked_status)"
 
 run_step "Checking git diff formatting" git diff --check
@@ -621,18 +511,6 @@ if [ "$RUN_BACKEND" = true ]; then
   run_step "Checking backend changed-file coverage (${BACKEND_COVERAGE_THRESHOLD}% minimum)" validate_backend_changed_coverage "$BACKEND_COVERAGE_RESULTS_DIR"
 else
   echo "No backend-related files changed; skipping backend verification steps."
-fi
-
-if [ "$RUN_FRONTEND" = true ]; then
-  ensure_python_available
-  run_step "Running frontend checks" run_frontend_script check
-  run_step "Running frontend lint" run_frontend_script lint
-  run_step "Building frontend" run_frontend_script build
-  FRONTEND_COVERAGE_RESULTS_DIR="$TMP_ROOT/frontend-coverage"
-run_step "Running frontend tests with coverage" run_frontend_script test -- --coverage.enabled=true --coverage.provider=v8 --coverage.reporter=text-summary --coverage.reporter=lcovonly --coverage.reportsDirectory "$FRONTEND_COVERAGE_RESULTS_DIR"
-  run_step "Checking frontend changed-file coverage (${FRONTEND_COVERAGE_THRESHOLD}% minimum)" validate_frontend_changed_coverage "$FRONTEND_COVERAGE_RESULTS_DIR"
-else
-  echo "No frontend-related files changed; skipping frontend verification steps."
 fi
 
 if [ "$RUN_INFRA" = true ]; then
@@ -677,11 +555,7 @@ else
   echo "No Python scripts changed; skipping Python validation."
 fi
 
-if [ "$RUN_CONTRACT_VALIDATION" = true ] && [ -f openapi.spec.json ] && [ -f www/src/schema.d.ts ]; then
-  run_step "Validating checked-in frontend API types" validate_frontend_schema
-else
-  echo "No contract-related files changed; skipping contract validation."
-fi
+echo "No generated frontend API types remain; skipping frontend contract validation."
 
 if ! command -v gh >/dev/null 2>&1; then
   echo "GitHub CLI ('gh') is required but was not found in PATH."

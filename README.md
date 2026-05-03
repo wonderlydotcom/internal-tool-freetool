@@ -639,7 +639,7 @@ Freetool.sln
 
 ### Prerequisites
 
-- [.NET 9.0 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
+- [.NET 10.0 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
 - [Git](https://git-scm.com/)
 
 ### Database Setup
@@ -659,12 +659,7 @@ This project uses **SQLite** with **DBUp** for database migrations. SQLite is a 
    dotnet restore Freetool.sln
    ```
 
-3. **Install frontend dependencies**
-   ```bash
-   cd www && npm install && cd ..
-   ```
-
-4. **Configure database (optional)**
+3. **Configure database (optional)**
    The default configuration uses SQLite with a local file. The database file `freetool.db` will be created automatically in the API project directory. If needed, edit `src/Freetool.Api/appsettings.Development.json`:
    ```json
    {
@@ -674,7 +669,7 @@ This project uses **SQLite** with **DBUp** for database migrations. SQLite is a 
    }
    ```
 
-5. **Start the application**
+4. **Start the application**
    ```bash
    docker-compose up --build
    ```
@@ -684,8 +679,8 @@ This project uses **SQLite** with **DBUp** for database migrations. SQLite is a 
    - Run all migration scripts automatically
    - Display migration progress in the console
 
-5. **Access the API**
-   - API: http://localhost:5000
+5. **Access the app**
+   - Hosted UI/API: http://localhost:5001
    - OpenAPI UI: http://localhost:5001/openapi
    - OTEL traces: http://localhost:18888/
 
@@ -780,7 +775,7 @@ This lets you test the app from different users' perspectives - for example, ver
 
 Dev mode exposes additional endpoints:
 
-- `GET /dev/mode` - Returns `{ devMode: true }` (useful for frontend detection)
+- `GET /dev/mode` - Returns `{ devMode: true }` (useful for development tooling)
 - `GET /dev/users` - Returns list of all users for the switcher dropdown
 
 These endpoints return 404 in production mode.
@@ -847,11 +842,10 @@ After each meaningful change:
 
 1. Create a pull request
 2. Run the shared `review-backend` skill from the `internal-tools` MCP server on backend changes (`src/Freetool.Domain`, `src/Freetool.Application`, `src/Freetool.Infrastructure`, `src/Freetool.Api`).
-3. Run the shared `review-frontend` skill from the `internal-tools` MCP server on frontend changes (`www/`).
-4. Run `./scripts/signoff-pr.sh` without any arguments - this script runs all validation needed
-5. Address any feedback from the script (usually some formatting fails or maybe lint rules)
-6. Re-run `./scripts/signoff-pr.sh`
-7. Squash merge the PR
+3. Run `./scripts/signoff-pr.sh` without any arguments - this script runs all validation needed.
+4. Address any feedback from the script (usually formatting or test failures).
+5. Re-run `./scripts/signoff-pr.sh`.
+6. Squash merge the PR.
 
 ## 🛠️ Development Workflow
 
