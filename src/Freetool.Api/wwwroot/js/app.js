@@ -26,6 +26,30 @@
       .forEach(updatePermissionsSaveState);
   }
 
+  function updateTypedConfirmState(form) {
+    const input = form.querySelector("[data-confirm-input]");
+    const submitButton = form.querySelector("[data-confirm-submit]");
+    if (!(input instanceof HTMLInputElement)) return;
+    if (!(submitButton instanceof HTMLButtonElement)) return;
+
+    const expected = input.getAttribute("data-confirm-expected") || "";
+    submitButton.disabled = input.value.trim() !== expected;
+  }
+
+  function initializeTypedConfirmForms() {
+    document
+      .querySelectorAll("[data-typed-confirm-form]")
+      .forEach(updateTypedConfirmState);
+  }
+
+  document.addEventListener("input", (event) => {
+    const input = closest(event.target, "[data-confirm-input]");
+    if (!input) return;
+
+    const form = input.closest("[data-typed-confirm-form]");
+    if (form) updateTypedConfirmState(form);
+  });
+
   document.addEventListener("change", (event) => {
     const checkbox = closest(event.target, "[data-permission-checkbox]");
     if (!checkbox) return;
@@ -80,4 +104,5 @@
   });
 
   initializePermissionsMatrices();
+  initializeTypedConfirmForms();
 })();

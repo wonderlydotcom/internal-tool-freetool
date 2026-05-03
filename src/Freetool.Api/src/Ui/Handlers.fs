@@ -1286,6 +1286,7 @@ module Handlers =
         fun ctx ->
             requireSpace ctx spaceId (fun space -> task {
                 do! validatePost ctx
+                let! posted = form ctx
                 let! admin = isOrgAdmin ctx
 
                 if not admin then
@@ -1295,6 +1296,13 @@ module Handlers =
                             $"/spaces/{spaceId}/settings"
                             "error"
                             "Only organization administrators can delete spaces."
+                elif formValue posted "ConfirmName" <> space.Name then
+                    return!
+                        redirectWithFlash
+                            ctx
+                            $"/spaces/{spaceId}/settings"
+                            "error"
+                            $"Type {space.Name} to confirm deleting this space."
                 else
                     let! result = (spaceHandler ctx).HandleCommand(DeleteSpace(UiContext.actorUserId ctx, spaceId))
 
