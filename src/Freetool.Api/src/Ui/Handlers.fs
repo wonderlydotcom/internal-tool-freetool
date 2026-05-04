@@ -40,21 +40,142 @@ module Handlers =
     let private formValue (form: IFormCollection) key = form[key].ToString() |> normalize
     let private optionalFormValue form key = formValue form key |> optionalText
 
+    let private formValuesRaw (form: IFormCollection) key =
+        form[key] |> Seq.map string |> Seq.map normalize |> Seq.toList
+
     let private formValues (form: IFormCollection) key =
-        form[key]
-        |> Seq.map string
-        |> Seq.map normalize
+        formValuesRaw form key
         |> Seq.filter (String.IsNullOrWhiteSpace >> not)
         |> Seq.toList
 
-    let private keyValuePairs (form: IFormCollection) keyPrefix : KeyValuePairDto list =
-        let keys = formValues form $"{keyPrefix}Key"
-        let values = formValues form $"{keyPrefix}Value"
+    let private valueAt (values: string list) index =
+        values |> List.tryItem index |> Option.defaultValue String.Empty
 
-        List.zip keys values
-        |> List.filter (fun (key, value) ->
-            not (String.IsNullOrWhiteSpace key) && not (String.IsNullOrWhiteSpace value))
-        |> List.map (fun (key, value) -> { Key = key; Value = value })
+    let private keyValuePairs (form: IFormCollection) keyPrefix : KeyValuePairDto list =
+        let keys = formValuesRaw form $"{keyPrefix}Key"
+        let values = formValuesRaw form $"{keyPrefix}Value"
+        let rowCount = max keys.Length values.Length
+
+        [ 0 .. rowCount - 1 ]
+        |> List.choose (fun index ->
+            let key = valueAt keys index
+            let value = valueAt values index
+
+            if String.IsNullOrWhiteSpace key || String.IsNullOrWhiteSpace value then
+                None
+            else
+                Some { Key = key; Value = value })
+
+    let private sequenceResults (results: Result<'T, DomainError> list) : Result<'T list, DomainError> =
+        let folder acc item =
+            match acc, item with
+            | Ok items, Ok item -> Ok(item :: items)
+            | Error error, _ -> Error error
+            | _, Error error -> Error error
+
+        results |> List.fold folder (Ok []) |> Result.map List.rev
+
+    let private parseBool fallback (value: string) =
+        match Boolean.TryParse value with
+        | true, parsed -> parsed
+        | _ -> fallback
+
+    let private splitCsv (value: string) =
+        value.Split(',', StringSplitOptions.RemoveEmptyEntries)
+        |> Array.map normalize
+        |> Array.filter (String.IsNullOrWhiteSpace >> not)
+        |> Array.toList
+
+    let private radioOptionsFromCsv (value: string) : RadioOptionDto list =
+        splitCsv value |> List.map (fun option -> { Value = option; Label = None })
+
+    let private inputTypeFromForm (inputType: string) (config: string) : Result<InputTypeDto, DomainError> =
+        let normalizedType = inputType.Trim().ToLowerInvariant()
+        let normalizedConfig = normalize config
+
+        match normalizedType with
+        | "email" -> Ok InputTypeDto.Email
+        | "date" -> Ok InputTypeDto.Date
+        | "integer" -> Ok InputTypeDto.Integer
+        | "boolean" -> Ok InputTypeDto.Boolean
+        | "currency" -> Ok(InputTypeDto.Currency SupportedCurrencyDto.USD)
+        | "radio" -> Ok(InputTypeDto.Radio(radioOptionsFromCsv normalizedConfig))
+        | "multi-email" -> Ok(InputTypeDto.MultiEmail(splitCsv normalizedConfig))
+        | "multi-date" -> Ok(InputTypeDto.MultiDate(splitCsv normalizedConfig))
+        | "multi-integer" ->
+            let parsed =
+                splitCsv normalizedConfig
+                |> List.map (fun value ->
+                    match Int32.TryParse value with
+                    | true, parsed -> Ok parsed
+                    | _ -> Error(ValidationError $"Invalid integer input option: {value}"))
+
+            parsed |> sequenceResults |> Result.map InputTypeDto.MultiInteger
+        | "multi-text" ->
+            let maxLength, valuesText =
+                match normalizedConfig.Split('|', 2) with
+                | [| length; values |] -> parsePositiveInt 100 length, values
+                | _ -> 100, normalizedConfig
+
+            Ok(InputTypeDto.MultiText(maxLength, splitCsv valuesText))
+        | "text"
+        | _ -> Ok(InputTypeDto.Text(parsePositiveInt 100 normalizedConfig))
+
+    let private appInputs (form: IFormCollection) : Result<AppInputDto list, DomainError> =
+        let titles = formValuesRaw form "InputTitle"
+        let descriptions = formValuesRaw form "InputDescription"
+        let types = formValuesRaw form "InputType"
+        let requiredValues = formValuesRaw form "InputRequired"
+        let defaultValues = formValuesRaw form "InputDefaultValue"
+        let typeConfigs = formValuesRaw form "InputTypeConfig"
+
+        let rowCount =
+            [
+                titles.Length
+                descriptions.Length
+                types.Length
+                requiredValues.Length
+                defaultValues.Length
+                typeConfigs.Length
+            ]
+            |> List.max
+
+        [ 0 .. rowCount - 1 ]
+        |> List.choose (fun index ->
+            let title = valueAt titles index
+
+            if String.IsNullOrWhiteSpace title then
+                None
+            else
+                let inputType = valueAt types index
+
+                let isBoolean =
+                    inputType.Trim().Equals("boolean", StringComparison.OrdinalIgnoreCase)
+
+                let required =
+                    if isBoolean then
+                        true
+                    else
+                        valueAt requiredValues index |> parseBool false
+
+                let defaultValue =
+                    if required then
+                        None
+                    else
+                        optionalText (valueAt defaultValues index)
+
+                inputTypeFromForm inputType (valueAt typeConfigs index)
+                |> Result.map (fun parsedType -> {
+                    Input = {
+                        Title = title
+                        Description = optionalText (valueAt descriptions index)
+                        Type = parsedType
+                    }
+                    Required = required
+                    DefaultValue = defaultValue
+                })
+                |> Some)
+        |> sequenceResults
 
     let private permissionFieldForUser (field: string) (userId: string) = $"{field}:{userId}"
 
@@ -1648,6 +1769,11 @@ module Handlers =
                                 "error"
                                 "You do not have permission to create apps."
                     else
+                        let submittedInputs = appInputs posted
+
+                        let useDynamicJsonBody =
+                            formValues posted "UseDynamicJsonBody" |> List.contains "true"
+
                         let sqlConfig: SqlQueryConfigDto option =
                             if resource.State.ResourceKind = ResourceKind.Sql then
                                 Some {
@@ -1657,28 +1783,13 @@ module Handlers =
                                     Filters = []
                                     Limit = None
                                     OrderBy = []
-                                    RawSql = Some "select 1"
+                                    RawSql = optionalFormValue posted "RawSql" |> Option.orElse (Some "select 1")
                                     RawSqlParams = []
                                 }
                             else
                                 None
 
-                        let dto: CreateAppDto = {
-                            Name = formValue posted "Name"
-                            FolderId = folderId
-                            ResourceId = resourceId
-                            HttpMethod = "GET"
-                            Inputs = []
-                            UrlPath = None
-                            UrlParameters = []
-                            Headers = []
-                            Body = []
-                            UseDynamicJsonBody = false
-                            SqlConfig = sqlConfig
-                            Description = None
-                        }
-
-                        match AppMapper.fromCreateDto dto with
+                        match submittedInputs with
                         | Error error ->
                             return!
                                 redirectWithFlash
@@ -1686,8 +1797,27 @@ module Handlers =
                                     $"/spaces/{spaceId}/{folderId}"
                                     "error"
                                     (UiFormat.domainError error)
-                        | Ok request ->
-                            match HttpMethod.Create request.HttpMethod with
+                        | Ok inputs ->
+                            let dto: CreateAppDto = {
+                                Name = formValue posted "Name"
+                                FolderId = folderId
+                                ResourceId = resourceId
+                                HttpMethod = optionalFormValue posted "HttpMethod" |> Option.defaultValue "GET"
+                                Inputs = inputs
+                                UrlPath = optionalFormValue posted "UrlPath"
+                                UrlParameters = keyValuePairs posted "UrlParameter"
+                                Headers = keyValuePairs posted "Header"
+                                Body =
+                                    if useDynamicJsonBody then
+                                        []
+                                    else
+                                        keyValuePairs posted "Body"
+                                UseDynamicJsonBody = useDynamicJsonBody
+                                SqlConfig = sqlConfig
+                                Description = optionalFormValue posted "Description"
+                            }
+
+                            match AppMapper.fromCreateDto dto with
                             | Error error ->
                                 return!
                                     redirectWithFlash
@@ -1695,23 +1825,8 @@ module Handlers =
                                         $"/spaces/{spaceId}/{folderId}"
                                         "error"
                                         (UiFormat.domainError error)
-                            | Ok method ->
-                                match
-                                    App.createWithSqlConfig
-                                        (UiContext.actorUserId ctx)
-                                        request.Name
-                                        fid
-                                        resource
-                                        method
-                                        request.Inputs
-                                        request.UrlPath
-                                        request.UrlParameters
-                                        request.Headers
-                                        request.Body
-                                        request.UseDynamicJsonBody
-                                        request.SqlConfig
-                                        request.Description
-                                with
+                            | Ok request ->
+                                match HttpMethod.Create request.HttpMethod with
                                 | Error error ->
                                     return!
                                         redirectWithFlash
@@ -1719,18 +1834,23 @@ module Handlers =
                                             $"/spaces/{spaceId}/{folderId}"
                                             "error"
                                             (UiFormat.domainError error)
-                                | Ok app ->
-                                    let! result =
-                                        (appHandler ctx).HandleCommand(CreateApp(UiContext.actorUserId ctx, app))
-
-                                    match result with
-                                    | Ok(AppResult created) ->
-                                        return!
-                                            redirectWithFlash
-                                                ctx
-                                                $"/spaces/{spaceId}/{created.Id.Value}"
-                                                "success"
-                                                "App created."
+                                | Ok method ->
+                                    match
+                                        App.createWithSqlConfig
+                                            (UiContext.actorUserId ctx)
+                                            request.Name
+                                            fid
+                                            resource
+                                            method
+                                            request.Inputs
+                                            request.UrlPath
+                                            request.UrlParameters
+                                            request.Headers
+                                            request.Body
+                                            request.UseDynamicJsonBody
+                                            request.SqlConfig
+                                            request.Description
+                                    with
                                     | Error error ->
                                         return!
                                             redirectWithFlash
@@ -1738,13 +1858,32 @@ module Handlers =
                                                 $"/spaces/{spaceId}/{folderId}"
                                                 "error"
                                                 (UiFormat.domainError error)
-                                    | _ ->
-                                        return!
-                                            redirectWithFlash
-                                                ctx
-                                                $"/spaces/{spaceId}/{folderId}"
-                                                "error"
-                                                "Unexpected app result."
+                                    | Ok app ->
+                                        let! result =
+                                            (appHandler ctx).HandleCommand(CreateApp(UiContext.actorUserId ctx, app))
+
+                                        match result with
+                                        | Ok(AppResult created) ->
+                                            return!
+                                                redirectWithFlash
+                                                    ctx
+                                                    $"/spaces/{spaceId}/{created.Id.Value}"
+                                                    "success"
+                                                    "App created."
+                                        | Error error ->
+                                            return!
+                                                redirectWithFlash
+                                                    ctx
+                                                    $"/spaces/{spaceId}/{folderId}"
+                                                    "error"
+                                                    (UiFormat.domainError error)
+                                        | _ ->
+                                            return!
+                                                redirectWithFlash
+                                                    ctx
+                                                    $"/spaces/{spaceId}/{folderId}"
+                                                    "error"
+                                                    "Unexpected app result."
                 | _ -> return! redirectWithFlash ctx $"/spaces/{spaceId}" "error" "Folder or resource not found."
             | _ -> return! redirectWithFlash ctx $"/spaces/{spaceId}" "error" "Invalid folder or resource id."
         }
@@ -1857,60 +1996,159 @@ module Handlers =
                                 "error"
                                 "You do not have permission to edit apps."
                     else
-                        let httpMethod = formValue posted "HttpMethod"
-                        let urlPath = optionalFormValue posted "UrlPath"
-                        let rawSql = optionalFormValue posted "RawSql"
-                        let useDynamic = formValues posted "UseDynamicJsonBody" |> List.contains "true"
-                        let handler = appHandler ctx
-                        let actor = UiContext.actorUserId ctx
+                        let appRepository = apps ctx
+                        let resourceRepository = resources ctx
+                        let! currentApp = appRepository.GetByIdAsync aid
 
-                        let! methodResult =
-                            handler.HandleCommand(UpdateAppHttpMethod(actor, appId, { HttpMethod = httpMethod }))
+                        match currentApp with
+                        | None -> return! redirectWithFlash ctx $"/spaces/{spaceId}" "error" "App not found."
+                        | Some currentApp ->
+                            let! selectedResource = resourceRepository.GetByIdAsync currentApp.State.ResourceId
 
-                        let! pathResult = handler.HandleCommand(UpdateAppUrlPath(actor, appId, { UrlPath = urlPath }))
+                            match selectedResource with
+                            | None ->
+                                return!
+                                    redirectWithFlash ctx $"/spaces/{spaceId}/{appId}" "error" "App resource not found."
+                            | Some selectedResource ->
+                                match appInputs posted with
+                                | Error error ->
+                                    return!
+                                        redirectWithFlash
+                                            ctx
+                                            $"/spaces/{spaceId}/{appId}"
+                                            "error"
+                                            (UiFormat.domainError error)
+                                | Ok inputs ->
+                                    let httpMethod =
+                                        optionalFormValue posted "HttpMethod"
+                                        |> Option.defaultValue (currentApp.State.HttpMethod.ToString())
 
-                        let! dynamicResult =
-                            handler.HandleCommand(
-                                UpdateAppUseDynamicJsonBody(actor, appId, { UseDynamicJsonBody = useDynamic })
-                            )
+                                    let urlPath = optionalFormValue posted "UrlPath"
+                                    let useDynamic = formValues posted "UseDynamicJsonBody" |> List.contains "true"
+                                    let actor = UiContext.actorUserId ctx
+                                    let handler = appHandler ctx
 
-                        let! sqlResult =
-                            match rawSql with
-                            | None -> Task.FromResult<Result<AppCommandResult, DomainError>>(Ok(AppUnitResult()))
-                            | Some sql ->
-                                handler.HandleCommand(
-                                    UpdateAppSqlConfig(
-                                        actor,
-                                        appId,
-                                        {
-                                            SqlConfig =
-                                                Some {
-                                                    Mode = "raw"
-                                                    Table = None
-                                                    Columns = []
-                                                    Filters = []
-                                                    Limit = None
-                                                    OrderBy = []
-                                                    RawSql = Some sql
-                                                    RawSqlParams = []
-                                                }
-                                        }
-                                    )
-                                )
+                                    let handleWithResource command =
+                                        AppHandler.handleCommandWithResourceRepository
+                                            appRepository
+                                            resourceRepository
+                                            command
 
-                        let firstError =
-                            [ methodResult; pathResult; dynamicResult; sqlResult ]
-                            |> List.tryPick (function
-                                | Error error -> Some error
-                                | _ -> None)
+                                    let! inputsResult =
+                                        handler.HandleCommand(UpdateAppInputs(actor, appId, { Inputs = inputs }))
 
-                        match firstError with
-                        | Some error ->
-                            return!
-                                redirectWithFlash ctx $"/spaces/{spaceId}/{appId}" "error" (UiFormat.domainError error)
-                        | None ->
-                            return!
-                                redirectWithFlash ctx $"/spaces/{spaceId}/{appId}" "success" "App configuration saved."
+                                    let! methodResult =
+                                        handler.HandleCommand(
+                                            UpdateAppHttpMethod(actor, appId, { HttpMethod = httpMethod })
+                                        )
+
+                                    let! operationResults = task {
+                                        match selectedResource.State.ResourceKind with
+                                        | ResourceKind.Http ->
+                                            let body = if useDynamic then [] else keyValuePairs posted "Body"
+
+                                            let! pathResult =
+                                                handler.HandleCommand(
+                                                    UpdateAppUrlPath(actor, appId, { UrlPath = urlPath })
+                                                )
+
+                                            let! dynamicResult =
+                                                handler.HandleCommand(
+                                                    UpdateAppUseDynamicJsonBody(
+                                                        actor,
+                                                        appId,
+                                                        { UseDynamicJsonBody = useDynamic }
+                                                    )
+                                                )
+
+                                            let! queryResult =
+                                                handleWithResource (
+                                                    UpdateAppQueryParameters(
+                                                        actor,
+                                                        appId,
+                                                        {
+                                                            UrlParameters = keyValuePairs posted "UrlParameter"
+                                                        }
+                                                    )
+                                                )
+
+                                            let! headersResult =
+                                                handleWithResource (
+                                                    UpdateAppHeaders(
+                                                        actor,
+                                                        appId,
+                                                        {
+                                                            Headers = keyValuePairs posted "Header"
+                                                        }
+                                                    )
+                                                )
+
+                                            let! bodyResult =
+                                                handleWithResource (UpdateAppBody(actor, appId, { Body = body }))
+
+                                            return [
+                                                inputsResult
+                                                methodResult
+                                                pathResult
+                                                dynamicResult
+                                                queryResult
+                                                headersResult
+                                                bodyResult
+                                            ]
+                                        | ResourceKind.Sql ->
+                                            let currentRawSql =
+                                                currentApp.State.SqlConfig
+                                                |> Option.bind (fun config -> config.RawSql)
+                                                |> Option.defaultValue "select 1"
+
+                                            let rawSql =
+                                                optionalFormValue posted "RawSql" |> Option.defaultValue currentRawSql
+
+                                            let! sqlResult =
+                                                handleWithResource (
+                                                    UpdateAppSqlConfig(
+                                                        actor,
+                                                        appId,
+                                                        {
+                                                            SqlConfig =
+                                                                Some {
+                                                                    Mode = "raw"
+                                                                    Table = None
+                                                                    Columns = []
+                                                                    Filters = []
+                                                                    Limit = None
+                                                                    OrderBy = []
+                                                                    RawSql = Some rawSql
+                                                                    RawSqlParams = []
+                                                                }
+                                                        }
+                                                    )
+                                                )
+
+                                            return [ inputsResult; methodResult; sqlResult ]
+                                    }
+
+                                    let firstError =
+                                        operationResults
+                                        |> List.tryPick (function
+                                            | Error error -> Some error
+                                            | _ -> None)
+
+                                    match firstError with
+                                    | Some error ->
+                                        return!
+                                            redirectWithFlash
+                                                ctx
+                                                $"/spaces/{spaceId}/{appId}"
+                                                "error"
+                                                (UiFormat.domainError error)
+                                    | None ->
+                                        return!
+                                            redirectWithFlash
+                                                ctx
+                                                $"/spaces/{spaceId}/{appId}"
+                                                "success"
+                                                "App configuration saved."
         }
 
     let runApp (spaceId: string) (appId: string) : EndpointHandler =
