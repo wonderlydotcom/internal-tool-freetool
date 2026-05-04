@@ -75,6 +75,26 @@ h1, h2, h3, p { margin-top: 0; }
 .field small { color: var(--muted); font-weight: 400; }
 input, textarea, select { width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: .65rem .75rem; background: white; color: var(--text); }
 textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.template-input-shell { position: relative; display: block; width: 100%; border: 1px solid var(--border); border-radius: 10px; background: white; }
+.template-input-shell:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
+.template-input-shell .template-input-control { position: relative; z-index: 2; width: 100%; border: 0; background: transparent; color: transparent; caret-color: var(--text); box-shadow: none; }
+.template-input-shell .template-input-control:focus { outline: none; }
+.template-input-shell .template-input-control::placeholder { color: var(--muted); opacity: 1; }
+.template-input-shell .template-input-control::selection { background: rgba(37, 99, 235, .22); color: transparent; }
+.template-input-mirror { position: absolute; inset: 0; z-index: 1; overflow: hidden; padding: .65rem .75rem; color: var(--text); pointer-events: none; white-space: pre; font: inherit; }
+.template-input-shell-multiline .template-input-mirror { white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.template-token { border-radius: .3rem; padding: .05rem .15rem; font-weight: 700; }
+.template-token-input { background: #dbeafe; color: #1d4ed8; }
+.template-token-user { background: #dcfce7; color: #166534; }
+.template-token-expression { background: #f3e8ff; color: #7e22ce; }
+.template-token-active { background: #e0ecff; color: #1d4ed8; }
+.template-token-invalid { background: #fee2e2; color: #b91c1c; text-decoration: line-through; }
+.template-suggestions { position: fixed; z-index: 1000; max-height: 18rem; overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: white; box-shadow: var(--shadow); padding: .35rem; }
+.template-suggestion-heading { padding: .45rem .55rem .25rem; color: var(--muted); font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.template-suggestion-item { display: flex; align-items: center; justify-content: space-between; gap: .75rem; width: 100%; border: 0; border-radius: 8px; padding: .5rem .55rem; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.template-suggestion-item:hover, .template-suggestion-item.is-active { background: #e0ecff; color: #1d4ed8; }
+.template-suggestion-meta { color: var(--muted); font-size: .75rem; font-weight: 700; }
+.template-suggestion-empty { padding: .65rem .75rem; color: var(--muted); }
 .checkbox-field { display: flex; align-items: center; gap: .5rem; margin: .8rem 0; }
 .checkbox-field input, .checkbox-grid input { width: auto; }
 .checkbox-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .5rem; }

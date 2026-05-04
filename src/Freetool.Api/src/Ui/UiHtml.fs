@@ -26,14 +26,27 @@ module UiHtml =
 
     let hidden (name: string) (value: string) : HtmlElement = attrs [ "type", "hidden"; "name", name; "value", value ] (input ())
 
-    let textInput (name: string) (value: string) (required: bool) (placeholder: string) : HtmlElement =
+    let textInputWithAttrs
+        (name: string)
+        (value: string)
+        (required: bool)
+        (placeholder: string)
+        (extraAttrs: (string * string) list)
+        : HtmlElement =
         attrs
-            ([ "type", "text"; "name", name; "value", value; "placeholder", placeholder ] @ requiredAttr required)
+            ([ "type", "text"; "name", name; "value", value; "placeholder", placeholder ]
+             @ requiredAttr required
+             @ extraAttrs)
             (input ())
 
-    let textareaInput (name: string) (value: string) (rows: int) : HtmlElement =
-        let tag = attrs [ "name", name; "rows", string rows ] (textarea ())
+    let textInput (name: string) (value: string) (required: bool) (placeholder: string) : HtmlElement =
+        textInputWithAttrs name value required placeholder []
+
+    let textareaInputWithAttrs (name: string) (value: string) (rows: int) (extraAttrs: (string * string) list) : HtmlElement =
+        let tag = attrs ([ "name", name; "rows", string rows ] @ extraAttrs) (textarea ())
         tag { value }
+
+    let textareaInput (name: string) (value: string) (rows: int) : HtmlElement = textareaInputWithAttrs name value rows []
 
     let checkbox (name: string) (value: string) (isChecked: bool) : HtmlElement =
         attrs ([ "type", "checkbox"; "name", name; "value", value ] @ checkedAttr isChecked) (input ())
