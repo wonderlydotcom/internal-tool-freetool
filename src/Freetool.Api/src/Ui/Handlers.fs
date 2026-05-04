@@ -2658,10 +2658,19 @@ module Handlers =
                         else
                             let inputs: RunInputDto list =
                                 app.State.Inputs
-                                |> List.map (fun input -> {
-                                    Title = input.Title
-                                    Value = formValue posted input.Title
-                                })
+                                |> List.choose (fun input ->
+                                    let value = formValue posted input.Title
+
+                                    let shouldInclude =
+                                        input.Required
+                                        || (match input.Type.Value with
+                                            | InputTypeValue.Boolean -> true
+                                            | _ -> not (String.IsNullOrWhiteSpace value))
+
+                                    if shouldInclude then
+                                        Some { Title = input.Title; Value = value }
+                                    else
+                                        None)
 
                             let dynamicBody = keyValuePairs posted "DynamicBody"
                             let! currentUser = getCurrentUser ctx

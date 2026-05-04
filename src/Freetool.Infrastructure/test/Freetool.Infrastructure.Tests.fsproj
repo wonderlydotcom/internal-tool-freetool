@@ -29,6 +29,7 @@
     <Compile Include="AutoTracingTests.fs" />
     <Compile Include="IapAuthMiddlewareTests.fs" />
     <Compile Include="DevAuthMiddlewareTests.fs" />
+    <Compile Include="UiRunAppViewTests.fs" />
     <Compile Include="AppControllerIntegrationTests.fs" />
     <Compile Include="DashboardControllerIntegrationTests.fs" />
     <Compile Include="../../Freetool.Api/test/AppControllerAuthTests.fs" />
