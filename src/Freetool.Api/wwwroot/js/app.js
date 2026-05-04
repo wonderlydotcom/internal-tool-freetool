@@ -679,10 +679,15 @@
     const selectedOption = select.options[select.selectedIndex];
     const resourceKind =
       selectedOption?.getAttribute("data-resource-kind") || "http";
+    const resourceId = select.value;
 
     form.querySelectorAll("[data-resource-kind-section]").forEach((section) => {
       const sectionKind = section.getAttribute("data-resource-kind-section");
       section.hidden = sectionKind !== resourceKind;
+    });
+
+    form.querySelectorAll("[data-resource-preview]").forEach((preview) => {
+      preview.hidden = preview.getAttribute("data-resource-preview") !== resourceId;
     });
   }
 
@@ -699,13 +704,60 @@
     });
   }
 
-  function syncInputRowState(row) {
+  function inputTypeConfigMeta(inputType) {
+    switch (inputType) {
+      case "text":
+        return {
+          visible: true,
+          placeholder: "Max length, e.g. 100",
+          help: "Optional. Text length defaults to 100 characters.",
+        };
+      case "radio":
+        return {
+          visible: true,
+          placeholder: "option1, option2",
+          help: "Required for radio. Use comma-separated options.",
+          defaultValue: "option1, option2",
+        };
+      case "multi-email":
+        return {
+          visible: true,
+          placeholder: "a@example.com, b@example.com",
+          help: "Allowed email choices, comma-separated.",
+        };
+      case "multi-date":
+        return {
+          visible: true,
+          placeholder: "2026-01-01, 2026-01-02",
+          help: "Allowed date choices, comma-separated YYYY-MM-DD values.",
+        };
+      case "multi-text":
+        return {
+          visible: true,
+          placeholder: "100|option1, option2",
+          help: "Use max length, a pipe, then comma-separated text choices.",
+        };
+      case "multi-integer":
+        return {
+          visible: true,
+          placeholder: "1, 2, 3",
+          help: "Allowed integer choices, comma-separated.",
+        };
+      default:
+        return { visible: false, placeholder: "", help: "No type configuration needed." };
+    }
+  }
+
+  function syncInputRowState(row, options = {}) {
     const typeSelect = row.querySelector("[data-input-type-select]");
     const requiredToggle = row.querySelector("[data-input-required-toggle]");
     const requiredValue = row.querySelector("[data-input-required-value]");
     const requiredLabel = row.querySelector("[data-input-required-label]");
     const defaultShell = row.querySelector("[data-input-default-shell]");
     const defaultInput = row.querySelector('input[name="InputDefaultValue"]');
+    const configShell = row.querySelector("[data-input-type-config-shell]");
+    const configInput = row.querySelector("[data-input-type-config]");
+    const configHelp = row.querySelector("[data-input-type-config-help]");
 
     if (!(typeSelect instanceof HTMLSelectElement)) return;
     if (!(requiredToggle instanceof HTMLInputElement)) return;
@@ -724,6 +776,22 @@
 
     if (defaultShell instanceof HTMLElement) defaultShell.hidden = isRequired;
     if (isRequired && defaultInput instanceof HTMLInputElement) defaultInput.value = "";
+
+    const configMeta = inputTypeConfigMeta(typeSelect.value);
+    if (configShell instanceof HTMLElement) configShell.hidden = !configMeta.visible;
+    if (configInput instanceof HTMLInputElement) {
+      configInput.placeholder = configMeta.placeholder;
+      configInput.setAttribute("aria-label", configMeta.placeholder || "Type configuration");
+      if (!configMeta.visible) configInput.value = "";
+      if (
+        options.typeChanged &&
+        configMeta.defaultValue &&
+        (!configInput.value || !configInput.value.includes(","))
+      ) {
+        configInput.value = configMeta.defaultValue;
+      }
+    }
+    if (configHelp) configHelp.textContent = configMeta.help;
   }
 
   function initializeInputRows(root = document) {
@@ -736,11 +804,84 @@
     });
   }
 
-  function initializeAppConfigForms() {
-    document.querySelectorAll("[data-app-config-form]").forEach((form) => {
+  function shouldTrackControl(control) {
+    return (
+      control.name &&
+      control.name !== "__RequestVerificationToken" &&
+      !control.closest(".kv-row-template, .input-row-template")
+    );
+  }
+
+  function dirtySnapshot(form) {
+    const controls = Array.from(form.querySelectorAll("input, textarea, select"));
+    return JSON.stringify(
+      controls.filter(shouldTrackControl).map((control) => {
+        if (control instanceof HTMLInputElement) {
+          if (control.type === "checkbox" || control.type === "radio") {
+            return [control.name, control.type, control.value, control.checked];
+          }
+          return [control.name, control.type, control.value];
+        }
+        if (control instanceof HTMLTextAreaElement) {
+          return [control.name, "textarea", control.value];
+        }
+        if (control instanceof HTMLSelectElement) {
+          return [control.name, "select", control.value];
+        }
+        return [control.name, control.value];
+      })
+    );
+  }
+
+  function setDirtyFormState(form, isDirty) {
+    const saveButton = form.querySelector("[data-dirty-submit]");
+    const resetButton = form.querySelector("[data-dirty-reset]");
+    const status = form.querySelector("[data-dirty-status]");
+
+    if (saveButton instanceof HTMLButtonElement) saveButton.disabled = !isDirty;
+    if (resetButton instanceof HTMLButtonElement) resetButton.disabled = !isDirty;
+    if (status) {
+      status.textContent = isDirty ? "Unsaved changes" : "No unsaved changes";
+      status.classList.toggle("is-dirty", isDirty);
+    }
+  }
+
+  function updateDirtyFormState(form) {
+    if (!form.matches("[data-track-dirty]")) return;
+    const initialSnapshot = form.dataset.initialSnapshot || "";
+    setDirtyFormState(form, dirtySnapshot(form) !== initialSnapshot);
+  }
+
+  function initializeDirtyForm(form) {
+    if (!form.matches("[data-track-dirty]")) return;
+    if (!form.dataset.initialHtml) form.dataset.initialHtml = form.innerHTML;
+    form.dataset.initialSnapshot = dirtySnapshot(form);
+    setDirtyFormState(form, false);
+  }
+
+  function resetDirtyForm(form) {
+    if (!form.matches("[data-track-dirty]") || !form.dataset.initialHtml) return;
+    form.innerHTML = form.dataset.initialHtml;
+    updateAppResourceSections(form);
+    updateDynamicBodySections(form);
+    initializeInputRows(form);
+    initializeTemplateInputs(form);
+    initializeDirtyForm(form);
+    syncTemplateMirrors(form);
+  }
+
+  function initializeAppConfigForms(root = document) {
+    const forms = [];
+    if (root instanceof Element && root.matches("[data-app-config-form]")) {
+      forms.push(root);
+    }
+    root.querySelectorAll?.("[data-app-config-form]").forEach((form) => forms.push(form));
+
+    forms.forEach((form) => {
       updateAppResourceSections(form);
       updateDynamicBodySections(form);
       initializeInputRows(form);
+      initializeDirtyForm(form);
     });
   }
 
@@ -766,6 +907,9 @@
       const form = input.closest("[data-typed-confirm-form]");
       if (form) updateTypedConfirmState(form);
     }
+
+    const dirtyForm = closest(event.target, "[data-track-dirty]");
+    if (dirtyForm instanceof HTMLFormElement) updateDirtyFormState(dirtyForm);
   });
 
   document.addEventListener("keydown", (event) => {
@@ -851,14 +995,20 @@
     const resourceSelect = closest(event.target, "[data-app-resource-select]");
     if (resourceSelect) {
       const form = resourceSelect.closest("[data-app-config-form]");
-      if (form) updateAppResourceSections(form);
+      if (form) {
+        updateAppResourceSections(form);
+        updateDirtyFormState(form);
+      }
       return;
     }
 
     const dynamicBodyCheckbox = closest(event.target, "[data-dynamic-body-checkbox]");
     if (dynamicBodyCheckbox) {
       const form = dynamicBodyCheckbox.closest("[data-app-config-form]");
-      if (form) updateDynamicBodySections(form);
+      if (form) {
+        updateDynamicBodySections(form);
+        updateDirtyFormState(form);
+      }
       return;
     }
 
@@ -869,9 +1019,14 @@
     if (inputRowControl) {
       const row = inputRowControl.closest(".input-row");
       if (row && !row.classList.contains("input-row-template")) {
-        syncInputRowState(row);
+        syncInputRowState(row, {
+          typeChanged: inputRowControl.matches("[data-input-type-select]"),
+        });
       }
     }
+
+    const dirtyForm = closest(event.target, "[data-track-dirty]");
+    if (dirtyForm instanceof HTMLFormElement) updateDirtyFormState(dirtyForm);
   });
 
   document.addEventListener("click", (event) => {
@@ -902,6 +1057,14 @@
       window.setTimeout(() => maybeOpenExpressionAtCursor(clickedTemplateInput), 0);
     }
 
+    const dirtyReset = closest(target, "[data-dirty-reset]");
+    if (dirtyReset) {
+      event.preventDefault();
+      const form = dirtyReset.closest("[data-track-dirty]");
+      if (form instanceof HTMLFormElement) resetDirtyForm(form);
+      return;
+    }
+
     const addButton = closest(target, "[data-add-kv-row]");
     if (addButton) {
       const container = addButton.closest("[data-kv-rows]");
@@ -912,6 +1075,8 @@
         resetFormControls(clone);
         container.insertBefore(clone, addButton);
         initializeTemplateInputs(clone);
+        const form = container.closest("[data-track-dirty]");
+        if (form instanceof HTMLFormElement) updateDirtyFormState(form);
       }
       return;
     }
@@ -927,6 +1092,8 @@
         container.insertBefore(clone, addInputButton);
         initializeTemplateInputs(clone);
         initializeInputRows(clone);
+        const form = container.closest("[data-track-dirty]");
+        if (form instanceof HTMLFormElement) updateDirtyFormState(form);
       }
       return;
     }
@@ -942,6 +1109,7 @@
         const form = row.closest("[data-app-config-form]");
         row.remove();
         syncTemplateMirrors(form || document);
+        if (form instanceof HTMLFormElement) updateDirtyFormState(form);
       }
       return;
     }
@@ -986,6 +1154,7 @@
     mutations.forEach((mutation) => {
       mutation.addedNodes.forEach((node) => {
         if (node instanceof Element) {
+          initializeAppConfigForms(node);
           initializeTemplateInputs(node);
           initializeInputRows(node);
         }

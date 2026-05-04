@@ -355,8 +355,21 @@ module Views =
 
                 defaultShell { UiHtml.textInput "InputDefaultValue" defaultValue false "Default value (optional)" }
 
-                div (class' = "input-row-field input-row-config") {
-                    UiHtml.textInput "InputTypeConfig" typeConfig false "Max length or comma options"
+                let configShell =
+                    UiHtml.attrs [ "class", "input-row-field input-row-config"; "data-input-type-config-shell", "true" ] (div ())
+
+                configShell {
+                    UiHtml.textInputWithAttrs
+                        "InputTypeConfig"
+                        typeConfig
+                        false
+                        "Max length or comma options"
+                        [ "data-input-type-config", "true" ]
+
+                    let configHelp =
+                        UiHtml.attrs [ "class", "input-config-help"; "data-input-type-config-help", "true" ] (small ())
+
+                    configHelp { "Optional type configuration" }
                 }
             }
 
@@ -397,10 +410,62 @@ module Views =
 
         UiHtml.attrs ([ "class", "app-resource-section"; "data-resource-kind-section", kindValue ] @ hiddenAttrs) (section ())
 
+    let private readOnlyKvSummary (titleText: string) (pairs: KeyValuePair list) =
+        let attrs =
+            [ "class", "resource-default-group" ]
+            @ if List.isEmpty pairs then [ "hidden", "hidden" ] else []
+
+        let group = UiHtml.attrs attrs (div ())
+
+        group {
+            strong () { titleText }
+            div (class' = "resource-default-list") {
+                for pair in pairs do
+                    div (class' = "resource-default-row") {
+                        code () { pair.Key }
+                        span () { pair.Value }
+                    }
+            }
+        }
+
+    let private httpResourcePreview (resource: ResourceData) (hidden: bool) =
+        let attrs =
+            [ "class", "resource-preview"; "data-resource-preview", resourceId resource ]
+            @ UiHtml.whenAttr hidden "hidden" "hidden"
+
+        let preview = UiHtml.attrs attrs (section ())
+
+        preview {
+            h4 () { "Resource defaults" }
+            div (class' = "resource-default-group") {
+                strong () { "Base URL" }
+                code () { resource.BaseUrl |> Option.map string |> Option.defaultValue "No base URL configured" }
+            }
+            readOnlyKvSummary "Default query parameters" resource.UrlParameters
+            readOnlyKvSummary "Default headers" resource.Headers
+            readOnlyKvSummary "Default JSON body" resource.Body
+            p (class' = "muted") { "These resource-level defaults are inherited when this app runs. Add app-level values below to extend them." }
+        }
+
+    let private sqlResourcePreview (resource: ResourceData) =
+        section (class' = "resource-preview") {
+            h4 () { "Resource connection" }
+            div (class' = "resource-default-group") {
+                strong () { "Database" }
+                code () {
+                    let host = resource.DatabaseHost |> Option.map string |> Option.defaultValue "host not set"
+                    let port = resource.DatabasePort |> Option.map string |> Option.defaultValue "5432"
+                    let database = resource.DatabaseName |> Option.map string |> Option.defaultValue "database not set"
+                    $"{host}:{port}/{database}"
+                }
+            }
+            readOnlyKvSummary "Connection options" resource.ConnectionOptions
+        }
+
     let private templateHelpText =
         "Template values can reference app inputs with @InputName or @\"Input Name\". Type {{ to open the expression editor for {{ ... }} expressions."
 
-    let private appConfigurationFields (resourceKind: ResourceKind option) (inputs: Input list) (app: AppData option) =
+    let private appConfigurationFields (resourceKind: ResourceKind option) (resource: ResourceData option) (inputs: Input list) (app: AppData option) =
         let httpMethod = app |> Option.map (fun value -> value.HttpMethod.ToString()) |> Option.defaultValue "GET"
         let urlPath = app |> Option.bind (fun value -> value.UrlPath) |> Option.defaultValue String.Empty
         let urlParameters = app |> Option.map (fun value -> value.UrlParameters |> List.map keyValuePairDto) |> Option.defaultValue []
@@ -421,6 +486,11 @@ module Views =
 
             httpSection {
                 h3 () { "HTTP request" }
+
+                match resource with
+                | Some selectedResource when selectedResource.ResourceKind = ResourceKind.Http -> httpResourcePreview selectedResource false
+                | _ -> ()
+
                 div (class' = "form-grid") {
                     field "HTTP method" (methodSelect httpMethod) None
                     field
@@ -469,6 +539,11 @@ module Views =
 
             sqlSection {
                 h3 () { "SQL request" }
+
+                match resource with
+                | Some selectedResource when selectedResource.ResourceKind = ResourceKind.Sql -> sqlResourcePreview selectedResource
+                | _ -> ()
+
                 label (class' = "field") {
                     span () { "Raw SQL" }
                     UiHtml.textareaInputWithAttrs "RawSql" rawSql 10 [ "data-template-input", "true" ]
@@ -603,7 +678,13 @@ module Views =
                         optionTag { resource.Name.Value }
                 }
             }
-            appConfigurationFields None [] None
+            div (class' = "resource-preview-stack") {
+                for resource in resources do
+                    match resource.ResourceKind with
+                    | ResourceKind.Http -> httpResourcePreview resource true
+                    | ResourceKind.Sql -> ()
+            }
+            appConfigurationFields None None [] None
             UiHtml.submitButton "Create app"
         }
 
@@ -909,11 +990,39 @@ module Views =
 
             section (class' = "card") {
                 cardHeader "Build configuration" (Some "Edit inputs and request templates. Use @InputName, @\"Input Name\", and type {{ to insert {{ expression }} syntax in values.")
-                let formTag11 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/apps/{aid}/config" [ "data-app-config-form", "true" ]
+                let formTag11 =
+                    UiHtml.enhancedPostForm
+                        $"/_ui/spaces/{sid}/apps/{aid}/config"
+                        [ "data-app-config-form", "true"
+                          "data-track-dirty", "true" ]
+
                 formTag11 {
                     UiHtml.antiforgeryInput token
-                    appConfigurationFields (Some resource.ResourceKind) app.Inputs (Some app)
-                    UiHtml.submitButton "Save configuration"
+                    appConfigurationFields (Some resource.ResourceKind) (Some resource) app.Inputs (Some app)
+                    div (class' = "form-actions dirty-actions") {
+                        let dirtyStatus = UiHtml.attrs [ "class", "dirty-status"; "data-dirty-status", "true" ] (span ())
+                        dirtyStatus { "No unsaved changes" }
+
+                        let discardButton =
+                            UiHtml.attrs
+                                [ "type", "button"
+                                  "class", "button button-ghost"
+                                  "data-dirty-reset", "true"
+                                  "disabled", "disabled" ]
+                                (button ())
+
+                        discardButton { "Discard changes" }
+
+                        let saveButton =
+                            UiHtml.attrs
+                                [ "type", "submit"
+                                  "class", "button"
+                                  "data-dirty-submit", "true"
+                                  "disabled", "disabled" ]
+                                (button ())
+
+                        saveButton { "Save configuration" }
+                    }
                 }
             }
         }

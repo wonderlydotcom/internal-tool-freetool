@@ -133,6 +133,20 @@ textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, m
 .input-required-switch input:focus-visible + .input-switch-track { outline: 2px solid var(--primary); outline-offset: 2px; }
 .input-required-switch input:disabled + .input-switch-track { opacity: .65; }
 .input-required-switch input:disabled ~ .input-required-label { opacity: .75; }
+.input-config-help { display: block; margin-top: .25rem; color: var(--muted); font-size: .76rem; }
+.resource-preview-stack { display: grid; gap: .75rem; }
+.resource-preview { display: grid; gap: .65rem; padding: .85rem; border: 1px solid #bfdbfe; border-radius: 12px; background: #eff6ff; }
+.resource-preview h4 { margin-bottom: 0; color: #1e3a8a; }
+.resource-default-group { display: grid; gap: .3rem; }
+.resource-default-group strong { color: #334155; font-size: .85rem; }
+.resource-default-group code { width: fit-content; max-width: 100%; padding: .25rem .4rem; border-radius: .35rem; background: white; color: var(--text); overflow-wrap: anywhere; }
+.resource-default-list { display: grid; gap: .35rem; }
+.resource-default-row { display: grid; grid-template-columns: minmax(120px, .35fr) minmax(0, 1fr); gap: .5rem; align-items: start; padding: .45rem .5rem; border-radius: .5rem; background: rgba(255, 255, 255, .72); }
+.resource-default-row span { overflow-wrap: anywhere; }
+.form-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: .5rem; }
+.dirty-actions { padding-top: .25rem; }
+.dirty-status { margin-right: auto; color: var(--muted); font-weight: 700; }
+.dirty-status.is-dirty { color: var(--warning); }
 .kv-row-template, .input-row-template { display: none; }
 .button { display: inline-flex; align-items: center; justify-content: center; gap: .35rem; border: 0; border-radius: 10px; padding: .65rem .9rem; background: var(--primary); color: var(--primary-contrast); font-weight: 700; cursor: pointer; }
 .button:hover { filter: brightness(.96); }
@@ -223,4 +237,8 @@ th { color: var(--muted); font-size: .85rem; }
   .input-row-title, .input-row-type, .input-row-required, .input-row-remove, .input-row-description, .input-row-default, .input-row-config { grid-column: 1; }
   .input-row-remove { justify-self: stretch; }
   .input-row-remove-button { width: 100%; }
+  .resource-default-row { grid-template-columns: 1fr; }
+  .form-actions { justify-content: stretch; }
+  .form-actions .button { width: 100%; }
+  .dirty-status { width: 100%; }
 }
