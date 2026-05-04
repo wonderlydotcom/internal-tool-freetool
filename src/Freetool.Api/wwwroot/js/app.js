@@ -335,7 +335,7 @@
   function initializeTemplateInput(control) {
     if (!isTemplateControl(control)) return;
     if (control.dataset.templateEnhanced === "true") return;
-    if (control.closest(".kv-row-template, .input-row-template")) return;
+    if (control.closest(".kv-row-template, .input-row-template, .sql-row-template")) return;
 
     const wrapper = document.createElement("span");
     wrapper.className = "template-input-shell";
@@ -700,6 +700,53 @@
     });
   }
 
+  function selectedSqlMode(form) {
+    const checked = form.querySelector('input[name="SqlMode"]:checked');
+    return checked instanceof HTMLInputElement ? checked.value : "gui";
+  }
+
+  function updateSqlModeSections(form) {
+    const mode = selectedSqlMode(form);
+
+    form.querySelectorAll("[data-sql-mode-section]").forEach((section) => {
+      section.hidden = section.getAttribute("data-sql-mode-section") !== mode;
+    });
+
+    form.querySelectorAll("[data-sql-mode-control]").forEach((control) => {
+      const option = control.closest(".sql-mode-option");
+      if (option) option.classList.toggle("is-active", control.value === mode);
+    });
+  }
+
+  function syncSqlFilterRow(row) {
+    const operator = row.querySelector("[data-sql-filter-operator]");
+    const value = row.querySelector("[data-sql-filter-value]");
+    if (!(operator instanceof HTMLSelectElement)) return;
+    if (!(value instanceof HTMLInputElement)) return;
+
+    const hasNoValue = operator.value === "IS NULL" || operator.value === "IS NOT NULL";
+    if (hasNoValue) value.value = "";
+    value.readOnly = hasNoValue;
+    value.placeholder = hasNoValue ? "No value for this operator" : "Value, @InputName, or comma list";
+    updateTemplateMirror(value);
+  }
+
+  function initializeSqlBuilders(root = document) {
+    const builders = [];
+    if (root instanceof Element && root.matches("[data-sql-builder]")) {
+      builders.push(root);
+    }
+    root.querySelectorAll?.("[data-sql-builder]").forEach((builder) => builders.push(builder));
+
+    builders.forEach((builder) => {
+      const form = builder.closest("[data-app-config-form]");
+      if (form) updateSqlModeSections(form);
+      builder.querySelectorAll(".sql-filter-row").forEach((row) => {
+        if (!row.classList.contains("sql-row-template")) syncSqlFilterRow(row);
+      });
+    });
+  }
+
   function initializeResourceForms(root = document) {
     const forms = [];
     if (root instanceof Element && root.matches("[data-resource-form]")) {
@@ -830,7 +877,7 @@
     return (
       control.name &&
       control.name !== "__RequestVerificationToken" &&
-      !control.closest(".kv-row-template, .input-row-template")
+      !control.closest(".kv-row-template, .input-row-template, .sql-row-template")
     );
   }
 
@@ -886,8 +933,10 @@
     form.innerHTML = form.dataset.initialHtml;
     updateAppResourceSections(form);
     updateResourceFormSections(form);
+    updateSqlModeSections(form);
     updateDynamicBodySections(form);
     initializeInputRows(form);
+    initializeSqlBuilders(form);
     initializeTemplateInputs(form);
     initializeDirtyForm(form);
     syncTemplateMirrors(form);
@@ -902,8 +951,10 @@
 
     forms.forEach((form) => {
       updateAppResourceSections(form);
+      updateSqlModeSections(form);
       updateDynamicBodySections(form);
       initializeInputRows(form);
+      initializeSqlBuilders(form);
       initializeDirtyForm(form);
     });
   }
@@ -1045,6 +1096,22 @@
       return;
     }
 
+    const sqlModeControl = closest(event.target, "[data-sql-mode-control]");
+    if (sqlModeControl) {
+      const form = sqlModeControl.closest("[data-app-config-form]");
+      if (form) {
+        updateSqlModeSections(form);
+        updateDirtyFormState(form);
+      }
+      return;
+    }
+
+    const sqlFilterOperator = closest(event.target, "[data-sql-filter-operator]");
+    if (sqlFilterOperator) {
+      const row = sqlFilterOperator.closest(".sql-filter-row");
+      if (row && !row.classList.contains("sql-row-template")) syncSqlFilterRow(row);
+    }
+
     const inputRowControl = closest(
       event.target,
       "[data-input-type-select], [data-input-required-toggle]"
@@ -1131,17 +1198,36 @@
       return;
     }
 
+    const addSqlButton = closest(target, "[data-add-sql-row]");
+    if (addSqlButton) {
+      const container = addSqlButton.closest("[data-sql-rows]");
+      const template = container?.querySelector(".sql-row-template");
+      if (container && template) {
+        const clone = template.cloneNode(true);
+        clone.classList.remove("sql-row-template");
+        resetFormControls(clone);
+        container.insertBefore(clone, addSqlButton);
+        initializeTemplateInputs(clone);
+        if (clone.matches(".sql-filter-row")) syncSqlFilterRow(clone);
+        const form = container.closest("[data-track-dirty]");
+        if (form instanceof HTMLFormElement) updateDirtyFormState(form);
+      }
+      return;
+    }
+
     const removeButton = closest(target, "[data-remove-row]");
     if (removeButton) {
-      const row = removeButton.closest(".kv-row, .input-row");
+      const row = removeButton.closest(".kv-row, .input-row, .sql-builder-row");
       if (
         row &&
         !row.classList.contains("kv-row-template") &&
-        !row.classList.contains("input-row-template")
+        !row.classList.contains("input-row-template") &&
+        !row.classList.contains("sql-row-template")
       ) {
-        const form = row.closest("[data-app-config-form]");
+        const form = row.closest("[data-track-dirty]");
+        const appConfigForm = row.closest("[data-app-config-form]");
         row.remove();
-        syncTemplateMirrors(form || document);
+        syncTemplateMirrors(appConfigForm || document);
         if (form instanceof HTMLFormElement) updateDirtyFormState(form);
       }
       return;
@@ -1182,6 +1268,7 @@
   initializeTypedConfirmForms();
   initializeAppConfigForms();
   initializeResourceForms();
+  initializeSqlBuilders();
   initializeTemplateInputs();
 
   const templateInputObserver = new MutationObserver((mutations) => {
@@ -1190,6 +1277,7 @@
         if (node instanceof Element) {
           initializeAppConfigForms(node);
           initializeResourceForms(node);
+          initializeSqlBuilders(node);
           initializeTemplateInputs(node);
           initializeInputRows(node);
         }
