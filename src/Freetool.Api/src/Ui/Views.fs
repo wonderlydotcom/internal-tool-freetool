@@ -1589,8 +1589,16 @@ module Views =
     let private submittedRunInputValues (run: RunData) =
         run.InputValues |> List.map (fun inputValue -> inputValue.Title, inputValue.Value) |> Map.ofList
 
+    let private runDefaultInputValue (appInput: Input) =
+        match appInput.DefaultValue with
+        | Some defaultValue ->
+            match defaultValue.Value with
+            | DateDefault date -> date.ToString("yyyy-MM-dd")
+            | _ -> defaultValue.ToRawString()
+        | None -> String.Empty
+
     let private runInputValue (submittedValues: Map<string, string>) (appInput: Input) =
-        submittedValues |> Map.tryFind appInput.Title |> Option.defaultValue (UiFormat.defaultValue appInput)
+        submittedValues |> Map.tryFind appInput.Title |> Option.defaultValue (runDefaultInputValue appInput)
 
     let private runTextControl
         (name: string)
@@ -1668,7 +1676,10 @@ module Views =
 
         match appInput.Type.Value with
         | InputTypeValue.Boolean -> runBooleanControl appInput.Title value
-        | InputTypeValue.Radio options -> runRadioControl appInput.Title required value options
+        | InputTypeValue.Radio options ->
+            options
+            |> List.map (fun option -> option.Value, (option.Label |> Option.defaultValue option.Value))
+            |> runSelectControl appInput.Title required value
         | InputTypeValue.MultiEmail allowedEmails ->
             allowedEmails
             |> List.map (fun email -> string email, string email)
