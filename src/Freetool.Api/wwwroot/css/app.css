@@ -211,6 +211,53 @@ th { color: var(--muted); font-size: .85rem; }
 .member-email { color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
 .permissions-legend { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-top: .9rem; color: var(--muted); font-size: .9rem; }
 .code-block { padding: 1rem; border-radius: 12px; overflow: auto; background: #0f172a; color: #e2e8f0; }
+.run-page { gap: 1.15rem; }
+.run-hero { display: grid; gap: .65rem; background: linear-gradient(135deg, #ffffff 0%, #eff6ff 100%); }
+.run-hero-meta { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
+.run-form { display: grid; gap: 1rem; }
+.run-input-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .85rem; }
+.run-input-card { display: grid; gap: .75rem; padding: .9rem; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-muted); }
+.run-input-label-row { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
+.run-input-label-row p { margin: .25rem 0 0; color: var(--muted); font-size: .9rem; }
+.run-input-title { font-weight: 800; }
+.required-marker { margin-left: .2rem; color: var(--danger); }
+.input-type-pill { flex: none; width: fit-content; padding: .18rem .45rem; border-radius: 999px; background: #eef2ff; color: #3730a3; font-size: .72rem; font-weight: 800; }
+.run-segmented-options, .run-choice-list { display: flex; flex-wrap: wrap; gap: .5rem; }
+.run-choice-pill { cursor: pointer; user-select: none; }
+.run-choice-pill input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+.run-choice-pill span { display: inline-flex; align-items: center; min-height: 2.35rem; padding: .55rem .85rem; border: 1px solid var(--border); border-radius: 999px; background: white; color: #334155; font-weight: 750; transition: border-color .15s ease, background .15s ease, color .15s ease, box-shadow .15s ease; }
+.run-choice-pill input:checked + span { border-color: var(--primary); background: #e0ecff; color: #1d4ed8; box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
+.run-choice-pill input:focus-visible + span { outline: 2px solid var(--primary); outline-offset: 2px; }
+.run-dynamic-body { display: grid; gap: .5rem; padding-top: .35rem; border-top: 1px solid var(--border); }
+.run-dynamic-body h3 { margin-bottom: 0; }
+.run-form-actions { padding-top: .25rem; }
+.run-submit-button { min-width: 8.5rem; }
+.run-result-stack { gap: 1rem; }
+.run-status-card, .run-request-card, .run-response-card { display: grid; gap: 1rem; }
+.run-status-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.run-status-heading h2 { margin-bottom: 0; }
+.run-status-pill { display: inline-flex; align-items: center; width: fit-content; padding: .35rem .7rem; border-radius: 999px; font-size: .8rem; font-weight: 900; }
+.run-status-success { background: #dcfce7; color: #14532d; }
+.run-status-failure { background: #fee2e2; color: #7f1d1d; }
+.run-status-warning { background: #fef3c7; color: #78350f; }
+.run-status-running, .run-status-pending { background: #e0f2fe; color: #075985; }
+.run-status-message { margin-bottom: 0; color: #334155; font-weight: 650; }
+.run-meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: .65rem; }
+.run-meta-item { display: grid; gap: .2rem; padding: .75rem; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-muted); }
+.run-meta-item span { color: var(--muted); font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
+.run-meta-item strong { overflow-wrap: anywhere; }
+.run-details summary { cursor: pointer; font-size: 1.05rem; font-weight: 850; }
+.run-detail-stack, .run-response-stack { display: grid; gap: 1rem; margin-top: 1rem; }
+.run-detail-group { display: grid; gap: .55rem; }
+.run-detail-group h3 { margin-bottom: 0; font-size: 1rem; }
+.run-kv-list { display: grid; gap: .45rem; }
+.run-kv-row { display: grid; grid-template-columns: minmax(140px, .35fr) minmax(0, 1fr); gap: .6rem; align-items: start; padding: .65rem .75rem; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-muted); }
+.run-kv-row code, .run-http-line code { overflow-wrap: anywhere; white-space: normal; }
+.run-kv-row code { color: #1e40af; font-weight: 800; }
+.run-http-line { display: flex; align-items: center; flex-wrap: wrap; gap: .55rem; padding: .7rem .8rem; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-muted); }
+.run-response-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; justify-content: space-between; color: var(--muted); font-size: .9rem; font-weight: 750; }
+.run-response-table { min-width: 620px; }
+.run-empty-response { text-align: left; }
 .resource-icon { width: 40px; height: 40px; object-fit: contain; }
 .resource-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 1rem; }
 .resource-card { display: grid; gap: .85rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
@@ -269,7 +316,7 @@ th { color: var(--muted); font-size: .85rem; }
   .sidebar { position: static; }
   .grid-two, .form-grid { grid-template-columns: 1fr; }
   .card-header-actions { flex-direction: column; }
-  .kv-row, .input-row, .sql-builder-row { grid-template-columns: 1fr; }
+  .kv-row, .input-row, .sql-builder-row, .run-kv-row { grid-template-columns: 1fr; }
   .input-row-title, .input-row-type, .input-row-required, .input-row-remove, .input-row-description, .input-row-default, .input-row-config { grid-column: 1; }
   .input-row-remove { justify-self: stretch; }
   .input-row-remove-button, .sql-row-remove-button { width: 100%; }
@@ -278,5 +325,7 @@ th { color: var(--muted); font-size: .85rem; }
   .resource-toggle-grid { grid-template-columns: 1fr; }
   .form-actions { justify-content: stretch; }
   .form-actions .button { width: 100%; }
+  .run-status-heading, .run-input-label-row { flex-direction: column; }
+  .run-response-table { min-width: 520px; }
   .dirty-status { width: 100%; }
 }

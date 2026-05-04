@@ -1,7 +1,9 @@
 namespace Freetool.Api.Ui
 
 open System
+open System.Text.Json
 open Oxpecker.ViewEngine
+open Freetool.Domain
 open Freetool.Domain.Entities
 open Freetool.Domain.Events
 open Freetool.Domain.ValueObjects
@@ -1584,47 +1586,523 @@ module Views =
             }
         }
 
+    let private submittedRunInputValues (run: RunData) =
+        run.InputValues |> List.map (fun inputValue -> inputValue.Title, inputValue.Value) |> Map.ofList
+
+    let private runInputValue (submittedValues: Map<string, string>) (appInput: Input) =
+        submittedValues |> Map.tryFind appInput.Title |> Option.defaultValue (UiFormat.defaultValue appInput)
+
+    let private runTextControl
+        (name: string)
+        (value: string)
+        (required: bool)
+        (htmlType: string)
+        (placeholder: string)
+        (extraAttrs: (string * string) list)
+        : HtmlElement =
+        UiHtml.attrs
+            ([ "type", htmlType
+               "name", name
+               "value", value
+               "placeholder", placeholder
+               "aria-label", name ]
+             @ UiHtml.requiredAttr required
+             @ extraAttrs)
+            (input ())
+
+    let private runSelectControl (name: string) (required: bool) (selectedValue: string) (choices: (string * string) list) : HtmlElement =
+        let selectTag =
+            UiHtml.attrs ([ "name", name; "aria-label", name ] @ UiHtml.requiredAttr required) (select ())
+
+        selectTag {
+            let placeholder =
+                UiHtml.attrs ([ "value", "" ] @ UiHtml.selectedAttr (String.IsNullOrWhiteSpace selectedValue)) (option ())
+
+            placeholder { "Choose an option" }
+
+            for value, labelText in choices do
+                UiHtml.optionTag value labelText (selectedValue = value)
+        }
+
+    let private runBooleanControl (name: string) (selectedValue: string) : HtmlElement =
+        let checkedValue =
+            if String.Equals(selectedValue, "true", StringComparison.OrdinalIgnoreCase) then
+                "true"
+            else
+                "false"
+
+        div (class' = "run-segmented-options") {
+            for value, labelText in [ "true", "Yes"; "false", "No" ] do
+                label (class' = "run-choice-pill") {
+                    UiHtml.attrs
+                        ([ "type", "radio"
+                           "name", name
+                           "value", value
+                           "aria-label", $"{name} {labelText}" ]
+                         @ UiHtml.checkedAttr (checkedValue = value))
+                        (input ())
+                    span () { labelText }
+                }
+        }
+
+    let private runRadioControl (name: string) (required: bool) (selectedValue: string) (options: RadioOption list) : HtmlElement =
+        div (class' = "run-choice-list") {
+            for radioOption in options do
+                label (class' = "run-choice-pill") {
+                    UiHtml.attrs
+                        ([ "type", "radio"
+                           "name", name
+                           "value", radioOption.Value
+                           "aria-label", $"{name} {radioOption.Value}" ]
+                         @ UiHtml.requiredAttr required
+                         @ UiHtml.checkedAttr (selectedValue = radioOption.Value))
+                        (input ())
+                    span () { radioOption.Label |> Option.defaultValue radioOption.Value }
+                }
+        }
+
+    let private runInputControl (submittedValues: Map<string, string>) (appInput: Input) : HtmlElement =
+        let value = runInputValue submittedValues appInput
+        let required = appInput.Required
+        let placeholder = $"Enter {appInput.Title}"
+
+        match appInput.Type.Value with
+        | InputTypeValue.Boolean -> runBooleanControl appInput.Title value
+        | InputTypeValue.Radio options -> runRadioControl appInput.Title required value options
+        | InputTypeValue.MultiEmail allowedEmails ->
+            allowedEmails
+            |> List.map (fun email -> string email, string email)
+            |> runSelectControl appInput.Title required value
+        | InputTypeValue.MultiDate allowedDates ->
+            allowedDates
+            |> List.map (fun date -> date.ToString("yyyy-MM-dd"), date.ToString("yyyy-MM-dd"))
+            |> runSelectControl appInput.Title required value
+        | InputTypeValue.MultiText(_, allowedValues) ->
+            allowedValues |> List.map (fun allowedValue -> allowedValue, allowedValue) |> runSelectControl appInput.Title required value
+        | InputTypeValue.MultiInteger allowedIntegers ->
+            allowedIntegers
+            |> List.map (fun allowedInteger -> string allowedInteger, string allowedInteger)
+            |> runSelectControl appInput.Title required value
+        | InputTypeValue.Email -> runTextControl appInput.Title value required "email" placeholder []
+        | InputTypeValue.Date -> runTextControl appInput.Title value required "date" placeholder []
+        | InputTypeValue.Integer -> runTextControl appInput.Title value required "number" placeholder [ "step", "1"; "inputmode", "numeric" ]
+        | InputTypeValue.Currency SupportedCurrency.USD ->
+            runTextControl
+                appInput.Title
+                value
+                required
+                "number"
+                $"Enter {appInput.Title} (USD)"
+                [ "min", "0"; "step", "0.01"; "inputmode", "decimal" ]
+        | InputTypeValue.Text maxLength ->
+            runTextControl appInput.Title value required "text" placeholder [ "maxlength", string maxLength ]
+
+    let private runInputCard (submittedValues: Map<string, string>) (appInput: Input) =
+        article (class' = "run-input-card") {
+            div (class' = "run-input-label-row") {
+                div () {
+                    span (class' = "run-input-title") {
+                        appInput.Title
+                        if appInput.Required then
+                            span (class' = "required-marker") { "*" }
+                    }
+
+                    match appInput.Description with
+                    | Some description when not (String.IsNullOrWhiteSpace description) -> p () { description }
+                    | _ -> ()
+                }
+
+                span (class' = "input-type-pill") { UiFormat.inputType appInput.Type }
+            }
+
+            runInputControl submittedValues appInput
+        }
+
+    let private runStatusClass =
+        function
+        | RunStatus.Success -> "run-status-success"
+        | RunStatus.Failure -> "run-status-failure"
+        | RunStatus.InvalidConfiguration -> "run-status-warning"
+        | RunStatus.Running -> "run-status-running"
+        | RunStatus.Pending -> "run-status-pending"
+
+    let private runStatusMessage (run: RunData) =
+        match run.Status with
+        | RunStatus.Success -> "App executed successfully."
+        | RunStatus.Failure -> run.ErrorMessage |> Option.defaultValue "The app execution failed."
+        | RunStatus.InvalidConfiguration ->
+            run.ErrorMessage |> Option.defaultValue "The app has an invalid configuration."
+        | RunStatus.Running -> "The app is still running."
+        | RunStatus.Pending -> "The run is waiting to start."
+
+    let private runDate value = value |> Option.map UiFormat.dateTime |> Option.defaultValue "—"
+
+    let private runDuration (run: RunData) =
+        match run.StartedAt, run.CompletedAt with
+        | Some startedAt, Some completedAt ->
+            let seconds = (completedAt.ToUniversalTime() - startedAt.ToUniversalTime()).TotalSeconds
+            seconds.ToString("0.00") + "s"
+        | _ -> "—"
+
+    let private runMetaItem (labelText: string) (value: string) =
+        div (class' = "run-meta-item") {
+            span () { labelText }
+            strong () { value }
+        }
+
+    let private requestFullUrl (request: ExecutableHttpRequest) =
+        if List.isEmpty request.UrlParameters then
+            request.BaseUrl
+        else
+            let query =
+                request.UrlParameters
+                |> List.map (fun (key, value) -> $"{Uri.EscapeDataString key}={Uri.EscapeDataString value}")
+                |> String.concat "&"
+
+            $"{request.BaseUrl}?{query}"
+
+    let private tryJsonValueLiteral (value: string) =
+        let trimmed = value.Trim()
+
+        if String.Equals(trimmed, "undefined", StringComparison.OrdinalIgnoreCase) then
+            None
+        else
+            try
+                use document = JsonDocument.Parse(trimmed)
+                Some(document.RootElement.GetRawText())
+            with _ ->
+                Some(JsonSerializer.Serialize(value))
+
+    let private keyValueJson (pairs: (string * string) list) =
+        let lines =
+            pairs
+            |> List.choose (fun (key, value) ->
+                tryJsonValueLiteral value
+                |> Option.map (fun literal -> $"  {JsonSerializer.Serialize(key)}: {literal}"))
+
+        if List.isEmpty lines then
+            "{}"
+        else
+            "{\n" + String.concat ",\n" lines + "\n}"
+
+    let private jsonElementDisplay (element: JsonElement) =
+        match element.ValueKind with
+        | JsonValueKind.Null
+        | JsonValueKind.Undefined -> String.Empty
+        | JsonValueKind.String ->
+            let value = element.GetString()
+            if isNull value then String.Empty else value
+        | JsonValueKind.Number
+        | JsonValueKind.True
+        | JsonValueKind.False -> element.ToString()
+        | _ -> element.GetRawText()
+
+    let private tryJsonTable (value: string) =
+        if String.IsNullOrWhiteSpace value then
+            None
+        else
+            try
+                use document = JsonDocument.Parse(value)
+                let root = document.RootElement
+
+                if root.ValueKind = JsonValueKind.Array then
+                    let items = root.EnumerateArray() |> Seq.toList
+
+                    if not (List.isEmpty items) && (items |> List.forall (fun item -> item.ValueKind = JsonValueKind.Object)) then
+                        let rows =
+                            items
+                            |> List.map (fun item ->
+                                item.EnumerateObject()
+                                |> Seq.map (fun property -> property.Name, jsonElementDisplay property.Value)
+                                |> Map.ofSeq)
+
+                        let columns =
+                            rows
+                            |> List.collect (fun row -> row |> Map.toList |> List.map fst)
+                            |> List.distinct
+
+                        Some(columns, rows)
+                    else
+                        None
+                else
+                    None
+            with _ ->
+                None
+
+    let private tryJsonKind (value: string) =
+        try
+            use document = JsonDocument.Parse(value)
+            Some document.RootElement.ValueKind
+        with _ ->
+            None
+
+    let private runKeyValueRows (title: string) (pairs: (string * string) list) =
+        let container =
+            UiHtml.attrs ([ "class", "run-detail-group" ] @ UiHtml.whenAttr (List.isEmpty pairs) "hidden" "hidden") (div ())
+
+        container {
+            if not (List.isEmpty pairs) then
+                h3 () { title }
+                div (class' = "run-kv-list") {
+                    for key, value in pairs do
+                        div (class' = "run-kv-row") {
+                            code () { key }
+                            span () { value }
+                        }
+                }
+        }
+
+    let private runKeyValuePairRows (title: string) (pairs: KeyValuePair list) =
+        pairs |> List.map (fun pair -> pair.Key, pair.Value) |> runKeyValueRows title
+
+    let private runResponseTable (columns: string list) (rows: Map<string, string> list) =
+        div (class' = "table-wrap") {
+            table (class' = "run-response-table") {
+                thead () {
+                    tr () {
+                        for column in columns do
+                            th () { column }
+                    }
+                }
+                tbody () {
+                    for row in rows do
+                        tr () {
+                            for column in columns do
+                                td () { row |> Map.tryFind column |> Option.defaultValue String.Empty }
+                        }
+                }
+            }
+        }
+
+    let private runResponseContent (response: string option) =
+        match response with
+        | Some responseText when not (String.IsNullOrWhiteSpace responseText) ->
+            match tryJsonTable responseText with
+            | Some(columns, rows) ->
+                div (class' = "run-response-stack") {
+                    div (class' = "run-response-toolbar") {
+                        span () { "Content type: JSON (table view)" }
+                        span () { $"{rows.Length} row(s)" }
+                    }
+                    runResponseTable columns rows
+                }
+            | None ->
+                let contentType =
+                    match tryJsonKind responseText with
+                    | Some _ -> "JSON"
+                    | None -> "Text / HTML"
+
+                div (class' = "run-response-stack") {
+                    div (class' = "run-response-toolbar") { span () { $"Content type: {contentType}" } }
+                    pre (class' = "code-block") { code () { UiFormat.tryFormatJson responseText } }
+                }
+        | _ ->
+            div (class' = "empty-state run-empty-response") {
+                h2 () { "No response body" }
+                p () { "The run completed without returning response data." }
+            }
+
+    let private runStatusPanel (run: RunData) =
+        section (id = "run-result", class' = "card run-status-card sensitive") {
+            div (class' = "run-status-heading") {
+                div () {
+                    p (class' = "eyebrow") { "Execution status" }
+                    h2 () { UiFormat.runStatus run.Status }
+                }
+
+                span (class' = $"run-status-pill {runStatusClass run.Status}") { UiFormat.runStatus run.Status }
+            }
+
+            p (class' = "run-status-message") { runStatusMessage run }
+
+            div (class' = "run-meta-grid") {
+                runMetaItem "Run ID" (run.Id.Value.ToString())
+                runMetaItem "Started" (runDate run.StartedAt)
+                runMetaItem "Completed" (runDate run.CompletedAt)
+                runMetaItem "Duration" (runDuration run)
+            }
+
+            match run.ErrorMessage with
+            | Some error when run.Status <> RunStatus.Success -> p (class' = "flash flash-error") { error }
+            | _ -> ()
+        }
+
+    let private runSqlDetails (app: AppData) (run: RunData) =
+        let sqlConfig = app.SqlConfig
+        let sqlText = run.ExecutedSql |> Option.orElse (sqlConfig |> Option.bind (fun config -> config.RawSql))
+
+        div (class' = "run-detail-stack") {
+            match sqlText with
+            | Some sql when not (String.IsNullOrWhiteSpace sql) ->
+                div (class' = "run-detail-group") {
+                    h3 () { "SQL query" }
+                    pre (class' = "code-block") { code () { sql } }
+                }
+            | _ -> p (class' = "muted") { "SQL query was not captured for this run." }
+
+            match sqlConfig with
+            | Some config ->
+                runKeyValuePairRows "SQL parameters" config.RawSqlParams
+
+                div (class' = "run-detail-group") {
+                    h3 () { "Query configuration" }
+                    div (class' = "run-meta-grid") {
+                        runMetaItem "Mode" (sqlQueryModeValue config.Mode)
+                        runMetaItem "Table" (config.Table |> Option.defaultValue "Not set")
+                        runMetaItem "Columns" (if List.isEmpty config.Columns then "All columns" else String.concat ", " config.Columns)
+                        runMetaItem "Limit" (config.Limit |> Option.map string |> Option.defaultValue "None")
+                    }
+                }
+
+                if not (List.isEmpty config.Filters) then
+                    div (class' = "run-detail-group") {
+                        h3 () { "Filters" }
+                        div (class' = "run-kv-list") {
+                            for filter in config.Filters do
+                                div (class' = "run-kv-row") {
+                                    code () { filter.Column }
+                                    span () {
+                                        let filterValue = filter.Value |> Option.defaultValue String.Empty
+                                        $"{sqlFilterOperatorValue filter.Operator} {filterValue}".Trim()
+                                    }
+                                }
+                        }
+                    }
+
+                if not (List.isEmpty config.OrderBy) then
+                    div (class' = "run-detail-group") {
+                        h3 () { "Order by" }
+                        div (class' = "run-kv-list") {
+                            for orderBy in config.OrderBy do
+                                div (class' = "run-kv-row") {
+                                    code () { orderBy.Column }
+                                    span () { sqlSortDirectionValue orderBy.Direction }
+                                }
+                        }
+                    }
+            | None -> ()
+        }
+
+    let private runHttpDetails (run: RunData) =
+        div (class' = "run-detail-stack") {
+            match run.ExecutableRequest with
+            | Some request ->
+                div (class' = "run-detail-group") {
+                    h3 () { "Method & URL" }
+                    div (class' = "run-http-line") {
+                        span (class' = "badge") { request.HttpMethod }
+                        code () { requestFullUrl request }
+                    }
+                }
+
+                runKeyValueRows "URL parameters" request.UrlParameters
+                runKeyValueRows "Headers" request.Headers
+
+                if not (List.isEmpty request.Body) then
+                    div (class' = "run-detail-group") {
+                        h3 () { if request.UseJsonBody then "JSON body" else "Body" }
+                        pre (class' = "code-block") { code () { keyValueJson request.Body } }
+                    }
+            | None -> p (class' = "muted") { "Request details were not captured for this run." }
+        }
+
+    let private runRequestPanel (app: AppData) (run: RunData) =
+        section (class' = "card run-request-card sensitive") {
+            let detailsTag = UiHtml.attrs [ "class", "run-details"; "open", "open" ] (details ())
+
+            detailsTag {
+                summary () { "Request details" }
+                div (class' = "run-detail-stack") {
+                    if app.SqlConfig.IsSome || run.ExecutedSql.IsSome then
+                        runSqlDetails app run
+                    else
+                        runHttpDetails run
+
+                    if not (List.isEmpty run.InputValues) then
+                        runKeyValueRows "Submitted inputs" (run.InputValues |> List.map (fun inputValue -> inputValue.Title, inputValue.Value))
+                }
+            }
+        }
+
+    let private runResponsePanel (run: RunData) =
+        section (class' = "card run-response-card sensitive") {
+            cardHeader "Response" (Some "Formatted response data from the latest run.")
+            runResponseContent run.Response
+        }
+
     let runAppPage (token: string) (space: SpaceData) (folderPath: FolderData list) (app: AppData) (result: RunData option) =
         let sid = spaceId space
         let aid = appId app
-        section (class' = "stack") {
+        let submittedValues = result |> Option.map submittedRunInputValues |> Option.defaultValue Map.empty
+        let hasInputs = not (List.isEmpty app.Inputs)
+        let hasRuntimeInputs = hasInputs || app.UseDynamicJsonBody
+        let isSqlApp = app.SqlConfig.IsSome
+
+        section (class' = "stack run-page") {
             runBreadcrumb space folderPath $"/spaces/{sid}/{aid}" app.Name "Run"
             spaceTabs space "builder"
-            section (class' = "card") {
-                cardHeader $"Run {app.Name}" app.Description
-                let formTag12 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/apps/{aid}/run" []
+
+            section (class' = "card run-hero") {
+                div (class' = "card-header-actions") {
+                    cardHeader $"Run {app.Name}" app.Description
+                    div (class' = "actions") {
+                        a (href = $"/spaces/{sid}/{aid}", class' = "button button-secondary") { "Edit app" }
+                        a (href = $"/audit?scope=app&appId={aid}", class' = "button button-ghost") { "Audit" }
+                    }
+                }
+
+                div (class' = "run-hero-meta") {
+                    span (class' = "badge") { if isSqlApp then "SQL app" else $"{app.HttpMethod} app" }
+                    span (class' = "badge badge-muted") { $"{app.Inputs.Length} input(s)" }
+                    if app.UseDynamicJsonBody then
+                        span (class' = "badge badge-muted") { "Dynamic JSON body" }
+                }
+            }
+
+            section (class' = "card run-inputs-card") {
+                cardHeader
+                    (if result.IsSome then "Run again" else if hasRuntimeInputs then "App inputs" else "Run app")
+                    (Some "Fill in runtime values, then execute the app.")
+
+                let formTag12 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/apps/{aid}/run" [ "class", "run-form" ]
+
                 formTag12 {
                     UiHtml.antiforgeryInput token
-                    for appInput in app.Inputs do
-                        let inputType = UiFormat.inputHtmlType appInput.Type
-                        field appInput.Title (UiHtml.attrs ([ "type", inputType; "name", appInput.Title; "value", UiFormat.defaultValue appInput ] @ UiHtml.requiredAttr appInput.Required) (input ())) appInput.Description
+
+                    if hasInputs then
+                        div (class' = "run-input-grid") {
+                            for appInput in app.Inputs do
+                                runInputCard submittedValues appInput
+                        }
+
                     if app.UseDynamicJsonBody then
-                        h3 () { "Dynamic JSON body" }
-                        kvRows "DynamicBody" []
-                    UiHtml.submitButton "Run app"
+                        section (class' = "run-dynamic-body") {
+                            h3 () { "JSON body parameters" }
+                            p (class' = "muted") { "Add key-value pairs to merge into the request body for this run." }
+                            kvRows "DynamicBody" []
+                        }
+
+                    if not hasRuntimeInputs then
+                        emptyState "No inputs required" "This app can run without runtime parameters."
+
+                    div (class' = "form-actions run-form-actions") {
+                        let submitButton = UiHtml.attrs [ "type", "submit"; "class", "button run-submit-button" ] (button ())
+
+                        submitButton {
+                            span (class' = "button-icon") { iconSvg "play" }
+                            if result.IsSome then "Run again" else "Run app"
+                        }
+                    }
                 }
             }
 
             match result with
             | None -> ()
             | Some run ->
-                section (id = "run-result", class' = "card sensitive") {
-                    cardHeader "Run result" (Some (UiFormat.runStatus run.Status))
-                    match run.ErrorMessage with
-                    | Some error -> p (class' = "flash flash-error") { error }
-                    | None -> ()
-                    match run.ExecutableRequest with
-                    | Some request ->
-                        h3 () { "Request" }
-                        let headerNames = request.Headers |> List.map fst |> String.concat ", "
-                        pre (class' = "code-block") { code () { sprintf "%s %s\nHeaders: %s" request.HttpMethod request.BaseUrl headerNames } }
-                    | None -> ()
-                    match run.ExecutedSql with
-                    | Some sql -> pre (class' = "code-block") { code () { sql } }
-                    | None -> ()
-                    match run.Response with
-                    | Some response -> pre (class' = "code-block") { code () { UiFormat.tryFormatJson response } }
-                    | None -> p () { "No response body." }
+                div (class' = "stack run-result-stack") {
+                    runStatusPanel run
+                    runRequestPanel app run
+                    runResponsePanel run
                 }
         }
 
