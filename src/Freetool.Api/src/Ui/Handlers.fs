@@ -584,6 +584,26 @@ module Handlers =
             |> List.sortBy (fun folder -> folder.Name.Value)
     }
 
+    let private folderPathFrom (allFolders: FolderData list) (folderId: FolderId) =
+        let folderById =
+            allFolders |> List.map (fun folder -> folder.Id, folder) |> Map.ofList
+
+        let rec collect currentFolderId visited acc =
+            if visited |> Set.contains currentFolderId then
+                acc
+            else
+                match folderById |> Map.tryFind currentFolderId with
+                | None -> acc
+                | Some folder ->
+                    let nextAcc = folder :: acc
+                    let nextVisited = visited |> Set.add currentFolderId
+
+                    match folder.ParentId with
+                    | Some parentId -> collect parentId nextVisited nextAcc
+                    | None -> nextAcc
+
+        collect folderId Set.empty []
+
     let private allResourcesForSpace (ctx: HttpContext) (space: SpaceData) = task {
         let! values = (resources ctx).GetBySpaceAsync space.Id 0 Int32.MaxValue
 
@@ -681,28 +701,19 @@ module Handlers =
     let spacesPage: EndpointHandler =
         fun ctx -> task {
             let! accessible = getAccessibleSpaces ctx
-
-            match accessible with
-            | first :: _ -> return! redirect ctx $"/spaces/{first.Id.Value}"
-            | [] ->
-                let! userList = allUsers ctx
-                let! admin = isOrgAdmin ctx
-                return! writePage ctx "spaces" "Spaces" (Views.noSpaces (UiContext.antiforgeryToken ctx) admin userList)
-        }
-
-    let spacesListPage: EndpointHandler =
-        fun ctx -> task {
-            let! accessible = getAccessibleSpaces ctx
             let! userList = allUsers ctx
             let! admin = isOrgAdmin ctx
+            let token = UiContext.antiforgeryToken ctx
 
-            return!
-                writePage
-                    ctx
-                    "spaces-list"
-                    "Spaces List"
-                    (Views.spacesList (UiContext.antiforgeryToken ctx) accessible userList admin)
+            let content =
+                match accessible with
+                | [] -> Views.noSpaces token admin userList
+                | spaces -> Views.spacesList token spaces userList admin
+
+            return! writePage ctx "spaces" "Spaces" content
         }
+
+    let spacesListPage: EndpointHandler = fun ctx -> redirect ctx "/spaces"
 
     let spaceRootPage (spaceId: string) : EndpointHandler =
         fun ctx ->
@@ -758,6 +769,7 @@ module Handlers =
                     | Some folder when folder.State.SpaceId = space.Id ->
                         let! allFolders = allFoldersForSpace ctx space
                         let childFolders = allFolders |> List.filter (fun item -> item.ParentId = Some fid)
+                        let folderPath = folderPathFrom allFolders fid
                         let! folderApps = (apps ctx).GetByFolderIdAsync fid 0 Int32.MaxValue
                         let! folderDashboards = (dashboards ctx).GetByFolderIdAsync fid 0 Int32.MaxValue
                         let! folderResources = allResourcesForSpace ctx space
@@ -772,6 +784,7 @@ module Handlers =
                                     token
                                     space
                                     folder.State
+                                    folderPath
                                     childFolders
                                     (folderApps
                                      |> List.map (fun app -> ResponseSanitizer.sanitizeApp app.State)
@@ -798,6 +811,8 @@ module Handlers =
 
                             if owningSpace |> Option.exists (fun owning -> owning.Id = space.Id) then
                                 let! resource = (resources ctx).GetByIdAsync app.State.ResourceId
+                                let! allFolders = allFoldersForSpace ctx space
+                                let folderPath = folderPathFrom allFolders app.State.FolderId
 
                                 match resource with
                                 | Some resource ->
@@ -809,6 +824,7 @@ module Handlers =
                                             (Views.appEditor
                                                 token
                                                 space
+                                                folderPath
                                                 (ResponseSanitizer.sanitizeApp app.State)
                                                 (ResponseSanitizer.sanitizeResource resource.State))
                                 | None ->
@@ -835,6 +851,8 @@ module Handlers =
 
                                 if owningSpace |> Option.exists (fun owning -> owning.Id = space.Id) then
                                     let! allApps = (apps ctx).GetBySpaceIdsAsync [ space.Id ] 0 Int32.MaxValue
+                                    let! allFolders = allFoldersForSpace ctx space
+                                    let folderPath = folderPathFrom allFolders dashboard.State.FolderId
 
                                     return!
                                         writePage
@@ -844,6 +862,7 @@ module Handlers =
                                             (Views.dashboardEditor
                                                 token
                                                 space
+                                                folderPath
                                                 dashboard.State
                                                 (allApps
                                                  |> List.map (fun app -> ResponseSanitizer.sanitizeApp app.State)
@@ -1280,6 +1299,9 @@ module Handlers =
                         let! owningSpace = getSpaceFromFolder ctx app.State.FolderId
 
                         if owningSpace |> Option.exists (fun owning -> owning.Id = space.Id) then
+                            let! allFolders = allFoldersForSpace ctx space
+                            let folderPath = folderPathFrom allFolders app.State.FolderId
+
                             return!
                                 writePage
                                     ctx
@@ -1288,6 +1310,7 @@ module Handlers =
                                     (Views.runAppPage
                                         (UiContext.antiforgeryToken ctx)
                                         space
+                                        folderPath
                                         (ResponseSanitizer.sanitizeApp app.State)
                                         None)
                         else
@@ -1320,6 +1343,9 @@ module Handlers =
                         let! owningSpace = getSpaceFromFolder ctx dashboard.State.FolderId
 
                         if owningSpace |> Option.exists (fun owning -> owning.Id = space.Id) then
+                            let! allFolders = allFoldersForSpace ctx space
+                            let folderPath = folderPathFrom allFolders dashboard.State.FolderId
+
                             return!
                                 writePage
                                     ctx
@@ -1328,6 +1354,7 @@ module Handlers =
                                     (Views.dashboardRuntimePage
                                         (UiContext.antiforgeryToken ctx)
                                         space
+                                        folderPath
                                         dashboard.State
                                         None)
                         else
@@ -1389,8 +1416,7 @@ module Handlers =
             let! admin = isOrgAdmin ctx
 
             if not admin then
-                return!
-                    redirectWithFlash ctx "/spaces-list" "error" "Only organization administrators can create spaces."
+                return! redirectWithFlash ctx "/spaces" "error" "Only organization administrators can create spaces."
             else
                 let memberIds = formValues posted "MemberIds"
                 let inviteEmail = optionalFormValue posted "InviteEmail"
@@ -1424,8 +1450,8 @@ module Handlers =
                 | Ok(SpaceResult space) ->
                     do! createSpaceRelationships ctx space
                     return! redirectWithFlash ctx $"/spaces/{space.Id.Value}" "success" $"Created space {space.Name}."
-                | Ok _ -> return! redirectWithFlash ctx "/spaces-list" "error" "Unexpected space command result."
-                | Error error -> return! redirectWithFlash ctx "/spaces-list" "error" (UiFormat.domainError error)
+                | Ok _ -> return! redirectWithFlash ctx "/spaces" "error" "Unexpected space command result."
+                | Error error -> return! redirectWithFlash ctx "/spaces" "error" (UiFormat.domainError error)
         }
 
     let updateSpaceName (spaceId: string) : EndpointHandler =
@@ -1745,7 +1771,7 @@ module Handlers =
                                }))
 
                         do! (auth ctx).DeleteRelationshipsAsync tuples
-                        return! redirectWithFlash ctx "/spaces-list" "success" "Space deleted."
+                        return! redirectWithFlash ctx "/spaces" "success" "Space deleted."
                     | Error error ->
                         return!
                             redirectWithFlash ctx $"/spaces/{spaceId}/settings" "error" (UiFormat.domainError error)
@@ -2670,6 +2696,8 @@ module Handlers =
                                 | Ok(RunResult run) ->
                                     ctx.Response.Headers.CacheControl <- "no-store"
                                     let sanitized = ResponseSanitizer.sanitizeRun run
+                                    let! allFolders = allFoldersForSpace ctx space
+                                    let folderPath = folderPathFrom allFolders app.State.FolderId
 
                                     let! model =
                                         UiContext.layoutModel
@@ -2688,6 +2716,7 @@ module Handlers =
                                                 (Views.runAppPage
                                                     (UiContext.antiforgeryToken ctx)
                                                     space
+                                                    folderPath
                                                     (ResponseSanitizer.sanitizeApp app.State)
                                                     (Some sanitized))
                                         )
@@ -2939,6 +2968,9 @@ module Handlers =
                                     let text =
                                         $"Status: {response.Status}\nPrepare run: {response.PrepareRunId}\nResponse: {response.Response |> Option.defaultValue String.Empty}\nError: {response.ErrorMessage |> Option.defaultValue String.Empty}"
 
+                                    let! allFolders = allFoldersForSpace ctx space
+                                    let folderPath = folderPathFrom allFolders dashboard.State.FolderId
+
                                     let! model =
                                         UiContext.layoutModel
                                             ctx
@@ -2956,6 +2988,7 @@ module Handlers =
                                                 (Views.dashboardRuntimePage
                                                     (UiContext.antiforgeryToken ctx)
                                                     space
+                                                    folderPath
                                                     dashboard.State
                                                     (Some text))
                                         )
