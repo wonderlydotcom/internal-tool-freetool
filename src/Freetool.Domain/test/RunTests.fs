@@ -318,6 +318,176 @@ let ``Run executable request composition should substitute input values`` () =
         | None -> Assert.True(false, "Expected executable request to be set")
     | Error error -> Assert.True(false, $"Expected success but got error: {error}")
 
+[<Fact>]
+let ``Run executable request composition should not leak missing optional body input placeholders`` () =
+    // Arrange
+    let actorUserId = UserId.FromGuid(Guid.NewGuid())
+    let folderId = FolderId.NewId()
+    let spaceId = SpaceId.FromGuid(Guid.NewGuid())
+    let textType = InputType.Text(100) |> unwrapResult
+
+    let inputs = [
+        {
+            Title = "Team Id"
+            Description = None
+            Type = textType
+            Required = true
+            DefaultValue = None
+        }
+        {
+            Title = "User Id"
+            Description = None
+            Type = textType
+            Required = false
+            DefaultValue = None
+        }
+    ]
+
+    let resource =
+        Resource.create actorUserId spaceId "Feature API" "Feature endpoint" "https://api.test.com/features" [] [] [
+            "teamId", "@\"Team Id\""
+            "userId", "@\"User Id\""
+            "unknownId", "@\"Unknown Id\""
+        ]
+        |> unwrapResult
+
+    let app =
+        App.create actorUserId "Feature App" folderId resource HttpMethod.Post inputs None [] [] [] false None
+        |> unwrapResult
+
+    let inputValues = [
+        {
+            Title = "Team Id"
+            Value = "team_123"
+        }
+    ]
+
+    let run = Run.createWithValidation actorUserId app inputValues |> unwrapResult
+
+    let testCurrentUser: CurrentUser = {
+        Id = "test-user-id"
+        Email = "test@example.com"
+        FirstName = "Test"
+        LastName = "User"
+    }
+
+    // Act
+    let result =
+        Run.composeExecutableRequestFromAppAndResource run app resource testCurrentUser None
+
+    // Assert
+    match result with
+    | Ok runWithRequest ->
+        match Run.getExecutableRequest runWithRequest with
+        | Some execRequest ->
+            let storedInput = Assert.Single(Run.getInputValues runWithRequest)
+            Assert.Equal("Team Id", storedInput.Title)
+            Assert.Equal("team_123", storedInput.Value)
+            Assert.Equal(("teamId", "team_123"), execRequest.Body |> List.find (fun (key, _) -> key = "teamId"))
+            Assert.Equal(("userId", "undefined"), execRequest.Body |> List.find (fun (key, _) -> key = "userId"))
+
+            Assert.Equal(
+                ("unknownId", "@\"Unknown Id\""),
+                execRequest.Body |> List.find (fun (key, _) -> key = "unknownId")
+            )
+        | None -> Assert.True(false, "Expected executable request to be set")
+    | Error error -> Assert.True(false, $"Expected success but got error: {error}")
+
+[<Fact>]
+let ``Run SQL query composition should preserve unknown missing placeholders`` () =
+    // Arrange
+    let actorUserId = UserId.FromGuid(Guid.NewGuid())
+    let folderId = FolderId.NewId()
+    let spaceId = SpaceId.FromGuid(Guid.NewGuid())
+    let textType = InputType.Text(100) |> unwrapResult
+
+    let inputs = [
+        {
+            Title = "Team Id"
+            Description = None
+            Type = textType
+            Required = true
+            DefaultValue = None
+        }
+    ]
+
+    let resource =
+        Resource.createWithKind
+            actorUserId
+            spaceId
+            ResourceKind.Sql
+            "Analytics DB"
+            "Analytics database"
+            None
+            []
+            []
+            []
+            (Some "analytics")
+            (Some "db.internal")
+            (Some 5432)
+            (Some "postgres")
+            (Some "username_password")
+            (Some "reporter")
+            (Some "secret")
+            true
+            false
+            []
+        |> unwrapResult
+
+    let sqlConfig = {
+        Mode = SqlQueryMode.Raw
+        Table = None
+        Columns = []
+        Filters = []
+        Limit = None
+        OrderBy = []
+        RawSql = Some "select * from users where team_id = @\"Team Id\" and unknown_id = @\"Unknown Id\""
+        RawSqlParams = []
+    }
+
+    let app =
+        App.createWithSqlConfig
+            actorUserId
+            "SQL App"
+            folderId
+            resource
+            HttpMethod.Post
+            inputs
+            None
+            []
+            []
+            []
+            false
+            (Some sqlConfig)
+            None
+        |> unwrapResult
+
+    let run =
+        Run.createWithValidation actorUserId app [
+            {
+                Title = "Team Id"
+                Value = "team_123"
+            }
+        ]
+        |> unwrapResult
+
+    let testCurrentUser: CurrentUser = {
+        Id = "test-user-id"
+        Email = "test@example.com"
+        FirstName = "Test"
+        LastName = "User"
+    }
+
+    // Act
+    let result = Run.composeSqlQueryFromAppAndResource run app testCurrentUser
+
+    // Assert
+    match result with
+    | Ok query ->
+        Assert.Contains("team_123", query.Sql)
+        Assert.Contains("@\"Unknown Id\"", query.Sql)
+    | Error error -> Assert.True(false, $"Expected success but got error: {error}")
+
 // Input Type Validation Tests
 
 [<Fact>]

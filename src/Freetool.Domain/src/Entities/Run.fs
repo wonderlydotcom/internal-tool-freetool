@@ -211,6 +211,7 @@ module Run =
     let private createTemplateSubstituter
         (inputValuesMap: Map<string, string>)
         (currentUser: CurrentUser)
+        (resolveMissingVariable: string -> string -> string)
         : (string -> string) =
         // Regex patterns for variable and expression matching
         // Match @"quoted name" or @identifier (with optional dot notation for current_user)
@@ -244,7 +245,7 @@ module Run =
                     else
                         match inputValuesMap.TryFind varName with
                         | Some value -> value
-                        | None -> m.Value // Keep original if not found
+                        | None -> resolveMissingVariable varName m.Value
             )
 
         /// Try to parse a string as a decimal for arithmetic
@@ -579,7 +580,22 @@ module Run =
             let inputValuesMap =
                 run.State.InputValues |> List.map (fun iv -> iv.Title, iv.Value) |> Map.ofList
 
-            let substituteTemplate = createTemplateSubstituter inputValuesMap currentUser
+            let bodyInputValuesMap =
+                App.getInputs app
+                |> List.fold
+                    (fun values input ->
+                        if values |> Map.containsKey input.Title then values
+                        elif input.Required then values
+                        else values |> Map.add input.Title "undefined")
+                    inputValuesMap
+
+            let substituteTemplate =
+                createTemplateSubstituter inputValuesMap currentUser (fun _ originalValue -> originalValue)
+
+            // JSON body placeholders for known-but-omitted optional inputs become `undefined`,
+            // which the HTTP executor omits instead of sending the literal placeholder.
+            let substituteBodyTemplate =
+                createTemplateSubstituter bodyInputValuesMap currentUser (fun _ originalValue -> originalValue)
 
             // Substitute input values in URL parameters, headers, and body
             let substitutedUrlParams =
@@ -604,7 +620,7 @@ module Run =
                     // Use the composed body with substitutions
                     let substitutedBody =
                         baseRequest.Body
-                        |> List.map (fun (key, value) -> (substituteTemplate key, substituteTemplate value))
+                        |> List.map (fun (key, value) -> (substituteBodyTemplate key, substituteBodyTemplate value))
 
                     Ok substitutedBody
 
@@ -643,7 +659,8 @@ module Run =
         let inputValuesMap =
             run.State.InputValues |> List.map (fun iv -> iv.Title, iv.Value) |> Map.ofList
 
-        let substituteTemplate = createTemplateSubstituter inputValuesMap currentUser
+        let substituteTemplate =
+            createTemplateSubstituter inputValuesMap currentUser (fun _ originalValue -> originalValue)
 
         match App.getSqlConfig app with
         | None -> Error(InvalidOperation "SQL config is missing for SQL app")

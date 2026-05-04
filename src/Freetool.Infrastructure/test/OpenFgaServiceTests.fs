@@ -304,9 +304,28 @@ let ``ReadRelationshipsAsync logs and skips unparseable tuples`` () =
     let logger = CapturingOpenFgaLogger()
     let service = OpenFgaService(openFgaApiUrl, logger)
 
+    let invokeBindingFlags =
+        BindingFlags.Instance ||| BindingFlags.Public ||| BindingFlags.NonPublic
+
     let generatedType =
         typeof<OpenFgaService>.Assembly.GetTypes()
-        |> Array.find (fun t -> t.FullName.Contains("mappedTuples@405"))
+        |> Array.find (fun t ->
+            let invokeMethod = t.GetMethod("Invoke", invokeBindingFlags)
+
+            if isNull invokeMethod then
+                false
+            else
+                let takesOpenFgaTuple =
+                    invokeMethod.GetParameters()
+                    |> Array.exists (fun parameter -> parameter.ParameterType = typeof<Tuple>)
+
+                let returnsRelationshipTupleOption =
+                    invokeMethod.ReturnType.IsGenericType
+                    && invokeMethod.ReturnType.GetGenericTypeDefinition() = typeof<RelationshipTuple option>
+                        .GetGenericTypeDefinition()
+                    && invokeMethod.ReturnType.GetGenericArguments().[0] = typeof<RelationshipTuple>
+
+                takesOpenFgaTuple && returnsRelationshipTupleOption)
 
     let ctor =
         generatedType.GetConstructors(BindingFlags.Instance ||| BindingFlags.NonPublic ||| BindingFlags.Public)
@@ -329,8 +348,7 @@ let ``ReadRelationshipsAsync logs and skips unparseable tuples`` () =
 
     let instance = ctor.Invoke(ctorArgs)
 
-    let invokeMethod =
-        generatedType.GetMethod("Invoke", BindingFlags.Instance ||| BindingFlags.Public ||| BindingFlags.NonPublic)
+    let invokeMethod = generatedType.GetMethod("Invoke", invokeBindingFlags)
 
     let invalidTuple =
         OpenFga.Sdk.Model.Tuple(
