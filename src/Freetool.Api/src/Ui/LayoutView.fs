@@ -182,7 +182,6 @@ module LayoutView =
 
                         nav (class' = "sidebar-nav") {
                             navLink (model.Active = "spaces") "/spaces" "Spaces"
-                            navLink (model.Active = "spaces-list") "/spaces-list" "Spaces List"
                             navLink (model.Active = "users") "/users" "Users"
                             navLink (model.Active = "audit") "/audit" "Audit"
                         }

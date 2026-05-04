@@ -796,6 +796,80 @@ module Views =
             }
         }
 
+    type private BreadcrumbPill = { Label: string; Href: string option }
+
+    let private breadcrumbPills (items: BreadcrumbPill list) : HtmlElement =
+        let navTag = UiHtml.attrs [ "class", "breadcrumb-pills"; "aria-label", "Breadcrumb" ] (nav ())
+
+        navTag {
+            ol () {
+                for item in items do
+                    li () {
+                        match item.Href with
+                        | Some href ->
+                            let link = UiHtml.attrs [ "href", href; "class", "breadcrumb-pill" ] (a ())
+                            link { item.Label }
+                        | None -> span (class' = "breadcrumb-pill is-current") { item.Label }
+                    }
+            }
+        }
+
+    let private spacesBreadcrumbItem isCurrent = {
+        Label = "Spaces"
+        Href = if isCurrent then None else Some "/spaces"
+    }
+
+    let private spaceBreadcrumbItem (space: SpaceData) isCurrent = {
+        Label = space.Name
+        Href = if isCurrent then None else Some $"/spaces/{spaceId space}"
+    }
+
+    let private folderBreadcrumbItems (space: SpaceData) (folderPath: FolderData list) (currentFolderId: FolderId option) =
+        let sid = spaceId space
+
+        folderPath
+        |> List.map (fun folder -> {
+            Label = folder.Name.Value
+            Href = if currentFolderId = Some folder.Id then None else Some $"/spaces/{sid}/{folderId folder}"
+        })
+
+    let private spacesListBreadcrumb () = breadcrumbPills [ spacesBreadcrumbItem true ]
+
+    let private spaceHomeBreadcrumb (space: SpaceData) =
+        breadcrumbPills [ spacesBreadcrumbItem false; spaceBreadcrumbItem space true ]
+
+    let private spaceSectionBreadcrumb (space: SpaceData) (sectionLabel: string) =
+        breadcrumbPills [
+            spacesBreadcrumbItem false
+            spaceBreadcrumbItem space false
+            { Label = sectionLabel; Href = None }
+        ]
+
+    let private folderBreadcrumb (space: SpaceData) (folderPath: FolderData list) =
+        let currentFolderId = folderPath |> List.tryLast |> Option.map (fun folder -> folder.Id)
+
+        breadcrumbPills
+            ([ spacesBreadcrumbItem false; spaceBreadcrumbItem space false ]
+             @ folderBreadcrumbItems space folderPath currentFolderId)
+
+    let private nodeBreadcrumb (space: SpaceData) (folderPath: FolderData list) (labelText: string) =
+        breadcrumbPills
+            ([ spacesBreadcrumbItem false; spaceBreadcrumbItem space false ]
+             @ folderBreadcrumbItems space folderPath None
+             @ [ { Label = labelText; Href = None } ])
+
+    let private runBreadcrumb
+        (space: SpaceData)
+        (folderPath: FolderData list)
+        (nodeHref: string)
+        (nodeLabel: string)
+        (runLabel: string)
+        =
+        breadcrumbPills
+            ([ spacesBreadcrumbItem false; spaceBreadcrumbItem space false ]
+             @ folderBreadcrumbItems space folderPath None
+             @ [ { Label = nodeLabel; Href = Some nodeHref }; { Label = runLabel; Href = None } ])
+
     let private spaceTabs (space: SpaceData) (active: string) =
         let sid = spaceId space
         nav (class' = "tabs") {
@@ -947,6 +1021,7 @@ module Views =
         let modalId = "create-space-modal"
 
         section (class' = "stack") {
+            spacesListBreadcrumb ()
             emptyState "No spaces yet" "Create a space to start building internal tools."
 
             if isOrgAdmin then
@@ -958,6 +1033,7 @@ module Views =
         let modalId = "create-space-modal"
 
         section (class' = "stack") {
+            spacesListBreadcrumb ()
             section (class' = "toolbar") {
                 div () {
                     h2 () { "Spaces" }
@@ -1003,6 +1079,7 @@ module Views =
         let createFolderModalId = $"create-folder-{sid}"
 
         section (class' = "stack") {
+            spaceHomeBreadcrumb space
             spaceTabs space "builder"
             section (class' = "card") {
                 div (class' = "toolbar") {
@@ -1068,6 +1145,7 @@ module Views =
         (token: string)
         (space: SpaceData)
         (folder: FolderData)
+        (folderPath: FolderData list)
         (childFolders: FolderData list)
         (apps: AppData list)
         (dashboards: DashboardData list)
@@ -1081,7 +1159,14 @@ module Views =
         let createAppModalId = $"create-app-{fid}"
         let createDashboardModalId = $"create-dashboard-{fid}"
 
+        let effectiveFolderPath =
+            if folderPath |> List.exists (fun item -> item.Id = folder.Id) then
+                folderPath
+            else
+                folderPath @ [ folder ]
+
         section (class' = "stack") {
+            folderBreadcrumb space effectiveFolderPath
             spaceTabs space "builder"
             section (class' = "card") {
                 div (class' = "toolbar") {
@@ -1349,6 +1434,7 @@ module Views =
         let createResourceModalId = $"create-resource-{sid}"
 
         section (class' = "stack") {
+            spaceSectionBreadcrumb space "Resources"
             spaceTabs space "resources"
             section (class' = "card") {
                 div (class' = "toolbar") {
@@ -1430,10 +1516,11 @@ module Views =
                     (resourceForm token $"/_ui/spaces/{sid}/resources/create" "Create resource" None)
         }
 
-    let appEditor (token: string) (space: SpaceData) (app: AppData) (resource: ResourceData) =
+    let appEditor (token: string) (space: SpaceData) (folderPath: FolderData list) (app: AppData) (resource: ResourceData) =
         let sid = spaceId space
         let aid = appId app
         section (class' = "stack") {
+            nodeBreadcrumb space folderPath app.Name
             spaceTabs space "builder"
             section (class' = "card") {
                 cardHeader app.Name (Some "App editor")
@@ -1497,10 +1584,11 @@ module Views =
             }
         }
 
-    let runAppPage (token: string) (space: SpaceData) (app: AppData) (result: RunData option) =
+    let runAppPage (token: string) (space: SpaceData) (folderPath: FolderData list) (app: AppData) (result: RunData option) =
         let sid = spaceId space
         let aid = appId app
         section (class' = "stack") {
+            runBreadcrumb space folderPath $"/spaces/{sid}/{aid}" app.Name "Run"
             spaceTabs space "builder"
             section (class' = "card") {
                 cardHeader $"Run {app.Name}" app.Description
@@ -1540,10 +1628,17 @@ module Views =
                 }
         }
 
-    let dashboardEditor (token: string) (space: SpaceData) (dashboard: DashboardData) (apps: AppData list) =
+    let dashboardEditor
+        (token: string)
+        (space: SpaceData)
+        (folderPath: FolderData list)
+        (dashboard: DashboardData)
+        (apps: AppData list)
+        =
         let sid = spaceId space
         let did = dashboardId dashboard
         section (class' = "stack") {
+            nodeBreadcrumb space folderPath dashboard.Name.Value
             spaceTabs space "builder"
             section (class' = "card") {
                 cardHeader dashboard.Name.Value (Some "Dashboard editor")
@@ -1580,10 +1675,17 @@ module Views =
             }
         }
 
-    let dashboardRuntimePage (token: string) (space: SpaceData) (dashboard: DashboardData) (result: string option) =
+    let dashboardRuntimePage
+        (token: string)
+        (space: SpaceData)
+        (folderPath: FolderData list)
+        (dashboard: DashboardData)
+        (result: string option)
+        =
         let sid = spaceId space
         let did = dashboardId dashboard
         section (class' = "stack") {
+            runBreadcrumb space folderPath $"/spaces/{sid}/{did}" dashboard.Name.Value "Run"
             spaceTabs space "builder"
             section (class' = "card") {
                 cardHeader $"Run {dashboard.Name.Value}" (Some "Prepare and action execution uses the existing dashboard handlers.")
@@ -1932,6 +2034,7 @@ module Views =
         let editableMembers = sortedMembers |> List.filter (inheritsAllPermissions >> not)
 
         section (class' = "stack") {
+            spaceSectionBreadcrumb space "Settings"
             spaceTabs space "settings"
             section (class' = "grid grid-two") {
                 section (class' = "card") {
@@ -2349,6 +2452,7 @@ module Views =
     let trashPage (token: string) (space: SpaceData) (apps: ValidatedApp list) (folders: ValidatedFolder list) (resources: ValidatedResource list) =
         let sid = spaceId space
         section (class' = "stack") {
+            spaceSectionBreadcrumb space "Trash"
             spaceTabs space "trash"
             section (class' = "card") {
                 cardHeader "Trash" (Some "Restore deleted apps, folders, and resources.")
