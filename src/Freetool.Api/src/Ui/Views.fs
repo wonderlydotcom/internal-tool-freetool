@@ -352,7 +352,7 @@ module Views =
         UiHtml.attrs ([ "class", "app-resource-section"; "data-resource-kind-section", kindValue ] @ hiddenAttrs) (section ())
 
     let private templateHelpText =
-        "Template values can reference app inputs with @InputName or @\"Input Name\" and expressions with {{ ... }}."
+        "Template values can reference app inputs with @InputName or @\"Input Name\". Type {{ to open the expression editor for {{ ... }} expressions."
 
     let private appConfigurationFields (resourceKind: ResourceKind option) (inputs: Input list) (app: AppData option) =
         let httpMethod = app |> Option.map (fun value -> value.HttpMethod.ToString()) |> Option.defaultValue "GET"
@@ -862,7 +862,7 @@ module Views =
             }
 
             section (class' = "card") {
-                cardHeader "Build configuration" (Some "Edit inputs and request templates. Use @InputName, @\"Input Name\", and {{ expression }} syntax in values.")
+                cardHeader "Build configuration" (Some "Edit inputs and request templates. Use @InputName, @\"Input Name\", and type {{ to insert {{ expression }} syntax in values.")
                 let formTag11 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/apps/{aid}/config" [ "data-app-config-form", "true" ]
                 formTag11 {
                     UiHtml.antiforgeryInput token
