@@ -691,6 +691,28 @@
     });
   }
 
+  function updateResourceFormSections(form) {
+    const select = form.querySelector("[data-resource-form-kind-select]");
+    const selectedKind = select instanceof HTMLSelectElement ? select.value : "http";
+
+    form.querySelectorAll("[data-resource-form-kind-section]").forEach((section) => {
+      section.hidden = section.getAttribute("data-resource-form-kind-section") !== selectedKind;
+    });
+  }
+
+  function initializeResourceForms(root = document) {
+    const forms = [];
+    if (root instanceof Element && root.matches("[data-resource-form]")) {
+      forms.push(root);
+    }
+    root.querySelectorAll?.("[data-resource-form]").forEach((form) => forms.push(form));
+
+    forms.forEach((form) => {
+      updateResourceFormSections(form);
+      initializeDirtyForm(form);
+    });
+  }
+
   function updateDynamicBodySections(form) {
     const checkbox = form.querySelector("[data-dynamic-body-checkbox]");
     const useDynamic =
@@ -863,6 +885,7 @@
     if (!form.matches("[data-track-dirty]") || !form.dataset.initialHtml) return;
     form.innerHTML = form.dataset.initialHtml;
     updateAppResourceSections(form);
+    updateResourceFormSections(form);
     updateDynamicBodySections(form);
     initializeInputRows(form);
     initializeTemplateInputs(form);
@@ -1012,6 +1035,16 @@
       return;
     }
 
+    const resourceKindSelect = closest(event.target, "[data-resource-form-kind-select]");
+    if (resourceKindSelect) {
+      const form = resourceKindSelect.closest("[data-resource-form]");
+      if (form) {
+        updateResourceFormSections(form);
+        updateDirtyFormState(form);
+      }
+      return;
+    }
+
     const inputRowControl = closest(
       event.target,
       "[data-input-type-select], [data-input-required-toggle]"
@@ -1148,6 +1181,7 @@
   initializePermissionsMatrices();
   initializeTypedConfirmForms();
   initializeAppConfigForms();
+  initializeResourceForms();
   initializeTemplateInputs();
 
   const templateInputObserver = new MutationObserver((mutations) => {
@@ -1155,6 +1189,7 @@
       mutation.addedNodes.forEach((node) => {
         if (node instanceof Element) {
           initializeAppConfigForms(node);
+          initializeResourceForms(node);
           initializeTemplateInputs(node);
           initializeInputRows(node);
         }

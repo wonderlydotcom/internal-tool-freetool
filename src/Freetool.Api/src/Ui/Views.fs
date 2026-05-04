@@ -6,6 +6,7 @@ open Freetool.Domain.Entities
 open Freetool.Domain.Events
 open Freetool.Domain.ValueObjects
 open Freetool.Application.DTOs
+open Freetool.Application.Services
 
 module Views =
     let private idOf (id: Guid) = id.ToString()
@@ -196,6 +197,15 @@ module Views =
         }
 
     let private keyValuePairDto (pair: KeyValuePair) : KeyValuePairDto = { Key = pair.Key; Value = pair.Value }
+
+    let private headerKeyValuePairDto (pair: KeyValuePair) : KeyValuePairDto =
+        if AuthorizationHeaderRedaction.isAuthorizationHeaderKey pair.Key then
+            {
+                Key = pair.Key
+                Value = AuthorizationHeaderRedaction.redactAuthorizationHeaderValue pair.Value
+            }
+        else
+            keyValuePairDto pair
 
     let private kvRows (namePrefix: string) (pairs: KeyValuePairDto list) =
         let container = UiHtml.attrs [ "class", "kv-rows"; "data-kv-rows", "true" ] (div ())
@@ -913,51 +923,277 @@ module Views =
                 modalDialog renameModalId $"Rename {folder.Name.Value}" None (renameFolderForm token sid fid folder.Name.Value)
         }
 
+    let private resourceKindFormValue (resourceKind: ResourceKind) =
+        match resourceKind with
+        | ResourceKind.Http -> "http"
+        | ResourceKind.Sql -> "sql"
+
+    let private resourceKindLabel (resourceKind: ResourceKind) =
+        match resourceKind with
+        | ResourceKind.Http -> "HTTP"
+        | ResourceKind.Sql -> "PostgreSQL"
+
+    let private resourceEndpointSummary (resource: ResourceData) =
+        match resource.ResourceKind with
+        | ResourceKind.Http -> resource.BaseUrl |> Option.map string |> Option.defaultValue "No base URL configured"
+        | ResourceKind.Sql ->
+            let host = resource.DatabaseHost |> Option.map string |> Option.defaultValue "host not set"
+            let port = resource.DatabasePort |> Option.map string |> Option.defaultValue "5432"
+            let database = resource.DatabaseName |> Option.map string |> Option.defaultValue "database not set"
+            $"{host}:{port}/{database}"
+
+    let private resourceKindSelect (selectedKind: string) =
+        let selectTag =
+            UiHtml.attrs [ "name", "Kind"; "data-resource-form-kind-select", "true"; "aria-label", "Resource kind" ] (select ())
+
+        selectTag {
+            UiHtml.optionTag "http" "HTTP" (selectedKind = "http")
+            UiHtml.optionTag "sql" "PostgreSQL" (selectedKind = "sql")
+        }
+
+    let private resourceFormKindSection (kind: string) (selectedKind: string) =
+        let hiddenAttrs = if kind = selectedKind then [] else [ "hidden", "hidden" ]
+
+        UiHtml.attrs
+            ([ "class", "resource-form-kind-section"; "data-resource-form-kind-section", kind ] @ hiddenAttrs)
+            (section ())
+
+    let private numberInput (name: string) (value: string) (placeholder: string) =
+        UiHtml.attrs [ "type", "number"; "name", name; "value", value; "placeholder", placeholder ] (input ())
+
+    let private passwordInput (name: string) (placeholder: string) =
+        UiHtml.attrs [ "type", "password"; "name", name; "value", String.Empty; "placeholder", placeholder; "autocomplete", "new-password" ] (input ())
+
+    let private databaseEngineSelect (selectedValue: string) =
+        let selectTag = UiHtml.attrs [ "name", "DatabaseEngine"; "aria-label", "Database engine" ] (select ())
+
+        selectTag { UiHtml.optionTag "POSTGRES" "Postgres" (selectedValue = "POSTGRES") }
+
+    let private databaseAuthSchemeSelect (selectedValue: string) =
+        let selectTag = UiHtml.attrs [ "name", "DatabaseAuthScheme"; "aria-label", "Database auth scheme" ] (select ())
+
+        selectTag { UiHtml.optionTag "USERNAME_PASSWORD" "Username + Password" (selectedValue = "USERNAME_PASSWORD") }
+
+    let private httpResourceFields (resource: ResourceData option) =
+        let baseUrl = resource |> Option.bind (fun value -> value.BaseUrl) |> Option.map string |> Option.defaultValue String.Empty
+        let urlParameters = resource |> Option.map (fun value -> value.UrlParameters |> List.map keyValuePairDto) |> Option.defaultValue []
+        let headers = resource |> Option.map (fun value -> value.Headers |> List.map headerKeyValuePairDto) |> Option.defaultValue []
+        let body = resource |> Option.map (fun value -> value.Body |> List.map keyValuePairDto) |> Option.defaultValue []
+
+        div (class' = "resource-form-fields") {
+            field "Base URL" (UiHtml.textInput "BaseUrl" baseUrl false "https://example.internal") None
+
+            div (class' = "form-section") {
+                h3 () { "Default query parameters" }
+                kvRows "UrlParameter" urlParameters
+            }
+
+            div (class' = "form-section") {
+                h3 () { "Default headers" }
+                p (class' = "muted") { "Authorization header values are redacted. Leave the redacted value unchanged to keep the existing secret." }
+                kvRows "Header" headers
+            }
+
+            div (class' = "form-section") {
+                h3 () { "Default JSON body" }
+                kvRows "Body" body
+            }
+        }
+
+    let private sqlResourceFields (resource: ResourceData option) =
+        let databaseName = resource |> Option.bind (fun value -> value.DatabaseName) |> Option.map string |> Option.defaultValue String.Empty
+        let databaseHost = resource |> Option.bind (fun value -> value.DatabaseHost) |> Option.map string |> Option.defaultValue String.Empty
+        let databasePort = resource |> Option.bind (fun value -> value.DatabasePort) |> Option.map string |> Option.defaultValue "5432"
+        let databaseEngine = resource |> Option.bind (fun value -> value.DatabaseEngine) |> Option.map string |> Option.defaultValue "POSTGRES"
+        let databaseAuthScheme = resource |> Option.bind (fun value -> value.DatabaseAuthScheme) |> Option.map string |> Option.defaultValue "USERNAME_PASSWORD"
+        let databaseUsername = resource |> Option.bind (fun value -> value.DatabaseUsername) |> Option.map string |> Option.defaultValue String.Empty
+        let useSsl = resource |> Option.map (fun value -> value.UseSsl) |> Option.defaultValue true
+        let enableSshTunnel = resource |> Option.map (fun value -> value.EnableSshTunnel) |> Option.defaultValue false
+        let connectionOptions = resource |> Option.map (fun value -> value.ConnectionOptions |> List.map keyValuePairDto) |> Option.defaultValue []
+        let passwordHelp = if resource.IsSome then "Leave blank to keep the existing password." else "Required for new SQL resources."
+
+        div (class' = "resource-form-fields") {
+            div (class' = "form-grid") {
+                field "Database name" (UiHtml.textInput "DatabaseName" databaseName false "analytics") None
+                field "Host" (UiHtml.textInput "DatabaseHost" databaseHost false "db.internal") None
+                field "Port" (numberInput "DatabasePort" databasePort "5432") None
+                field "Engine" (databaseEngineSelect databaseEngine) None
+                field "Auth scheme" (databaseAuthSchemeSelect databaseAuthScheme) None
+                field "Username" (UiHtml.textInput "DatabaseUsername" databaseUsername false "db_user") None
+                field "Password" (passwordInput "DatabasePassword" "••••••••") (Some passwordHelp)
+            }
+
+            div (class' = "resource-toggle-grid") {
+                label (class' = "resource-toggle-card") {
+                    div () {
+                        strong () { "Use SSL/TLS" }
+                        small () { "Encrypt connections to the database." }
+                    }
+                    UiHtml.checkbox "UseSsl" "true" useSsl
+                }
+
+                label (class' = "resource-toggle-card") {
+                    div () {
+                        strong () { "Enable SSH tunnel" }
+                        small () { "Connect through an SSH bastion when configured." }
+                    }
+                    UiHtml.checkbox "EnableSshTunnel" "true" enableSshTunnel
+                }
+            }
+
+            div (class' = "form-section") {
+                h3 () { "Connection options" }
+                kvRows "ConnectionOption" connectionOptions
+            }
+        }
+
+    let private resourceForm (token: string) (action: string) (submitLabel: string) (resource: ResourceData option) =
+        let selectedKind = resource |> Option.map (fun value -> resourceKindFormValue value.ResourceKind) |> Option.defaultValue "http"
+        let isEdit = resource.IsSome
+
+        let formAttrs =
+            [ "data-resource-form", "true" ]
+            @ if isEdit then [ "data-track-dirty", "true" ] else []
+
+        let formTag = UiHtml.enhancedPostForm action formAttrs
+
+        formTag {
+            UiHtml.antiforgeryInput token
+            let name = resource |> Option.map (fun value -> value.Name.Value) |> Option.defaultValue String.Empty
+            let description = resource |> Option.map (fun value -> value.Description.Value) |> Option.defaultValue String.Empty
+
+            div (class' = "form-grid") {
+                field "Name" (UiHtml.textInput "Name" name true "Core API") None
+                if isEdit then
+                    field "Kind" (span (class' = "badge") { resource |> Option.map (fun value -> resourceKindLabel value.ResourceKind) |> Option.defaultValue "HTTP" }) None
+                    UiHtml.hidden "Kind" selectedKind
+                else
+                    field "Kind" (resourceKindSelect selectedKind) None
+            }
+
+            label (class' = "field") {
+                span () { "Description" }
+                UiHtml.textareaInput "Description" description 3
+            }
+
+            if isEdit then
+                match resource with
+                | Some value when value.ResourceKind = ResourceKind.Sql ->
+                    let sqlSection = resourceFormKindSection "sql" selectedKind
+                    sqlSection { sqlResourceFields resource }
+                | _ ->
+                    let httpSection = resourceFormKindSection "http" selectedKind
+                    httpSection { httpResourceFields resource }
+            else
+                let httpSection = resourceFormKindSection "http" selectedKind
+                httpSection { httpResourceFields None }
+
+                let sqlSection = resourceFormKindSection "sql" selectedKind
+                sqlSection { sqlResourceFields None }
+
+            if isEdit then
+                div (class' = "form-actions dirty-actions") {
+                    let dirtyStatus = UiHtml.attrs [ "class", "dirty-status"; "data-dirty-status", "true" ] (span ())
+                    dirtyStatus { "No unsaved changes" }
+
+                    let discardButton =
+                        UiHtml.attrs [ "type", "button"; "class", "button button-ghost"; "data-dirty-reset", "true"; "disabled", "disabled" ] (button ())
+
+                    discardButton { "Discard changes" }
+
+                    let saveButton =
+                        UiHtml.attrs [ "type", "submit"; "class", "button"; "data-dirty-submit", "true"; "disabled", "disabled" ] (button ())
+
+                    saveButton { submitLabel }
+                }
+            else
+                UiHtml.submitButton submitLabel
+        }
+
     let resourcesPage (token: string) (space: SpaceData) (resources: ResourceData list) (apps: AppData list) (permissions: SpacePermissionsDto) =
         let sid = spaceId space
+        let createResourceModalId = $"create-resource-{sid}"
+
         section (class' = "stack") {
             spaceTabs space "resources"
-            section (class' = "grid grid-two") {
-                section (class' = "card") {
-                    cardHeader "Resources" (Some "HTTP and PostgreSQL connections")
-                    div (class' = "card-list") {
-                        for resource in resources do
-                            let rid = resourceId resource
-                            let usedBy = apps |> List.filter (fun app -> app.ResourceId = resource.Id)
-                            article (class' = "list-row") {
+            section (class' = "card") {
+                div (class' = "toolbar") {
+                    div () { cardHeader "Resources" (Some "HTTP and PostgreSQL connections") }
+                    if permissions.CreateResource then
+                        modalOpenButton createResourceModalId "New Resource" "plus" "button"
+                }
+            }
+
+            if List.isEmpty resources then
+                emptyState "No resources yet" "Create an HTTP or PostgreSQL resource before adding apps."
+            else
+                section (class' = "resource-grid") {
+                    for resource in resources do
+                        let rid = resourceId resource
+                        let usedBy = apps |> List.filter (fun app -> app.ResourceId = resource.Id)
+                        let editModalId = $"edit-resource-{rid}"
+
+                        article (class' = "resource-card") {
+                            header (class' = "resource-card-header") {
                                 UiHtml.attrs [ "src", (if resource.ResourceKind = ResourceKind.Http then "/assets/http.svg" else "/assets/postgres.png"); "alt", ""; "class", "resource-icon" ] (img ())
                                 div () {
                                     h3 () { resource.Name.Value }
                                     p () { resource.Description.Value }
-                                    small () { $"{resource.ResourceKind} · Used by {List.length usedBy} apps" }
                                 }
-                                if List.isEmpty usedBy && permissions.DeleteResource then
-                                    let formTag7 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/resources/{rid}/delete" []
-                                    formTag7 {
-                                        UiHtml.antiforgeryInput token
-                                        UiHtml.dangerSubmitButton "Delete"
+                            }
+
+                            div (class' = "resource-meta") {
+                                span (class' = "badge") { resourceKindLabel resource.ResourceKind }
+                                span (class' = "badge badge-muted") { $"Used by {List.length usedBy} apps" }
+                            }
+
+                            div (class' = "resource-detail-list") {
+                                div () {
+                                    strong () { if resource.ResourceKind = ResourceKind.Http then "Base URL" else "Database" }
+                                    code () { resourceEndpointSummary resource }
+                                }
+
+                                match resource.ResourceKind with
+                                | ResourceKind.Http ->
+                                    div () {
+                                        strong () { "Defaults" }
+                                        span () { $"{List.length resource.UrlParameters} query · {List.length resource.Headers} headers · {List.length resource.Body} body" }
+                                    }
+                                | ResourceKind.Sql ->
+                                    div () {
+                                        let sslState = if resource.UseSsl then "on" else "off"
+                                        let sshState = if resource.EnableSshTunnel then "on" else "off"
+
+                                        strong () { "Security" }
+                                        span () { $"SSL: {sslState} · SSH tunnel: {sshState}" }
                                     }
                             }
-                    }
+
+                            div (class' = "object-actions") {
+                                if permissions.EditResource then
+                                    iconModalOpenButton editModalId "Edit resource" "edit"
+                                if permissions.DeleteResource then
+                                    if List.isEmpty usedBy then
+                                        iconDeleteForm token $"/_ui/spaces/{sid}/resources/{rid}/delete" "Delete resource" $"Delete resource {resource.Name.Value}?"
+                                    else
+                                        span (class' = "badge badge-muted", title = "Delete apps that use this resource first.") { "In use" }
+                            }
+                        }
+
+                        if permissions.EditResource then
+                            modalDialog
+                                editModalId
+                                $"Edit {resource.Name.Value}"
+                                (Some "Changes are saved to the resource defaults used by apps at run time.")
+                                (resourceForm token $"/_ui/spaces/{sid}/resources/{rid}/update" "Save resource" (Some resource))
                 }
 
-                if permissions.CreateResource then
-                    section (class' = "card") {
-                        cardHeader "Create HTTP resource" (Some "SQL resources can be created by choosing PostgreSQL below.")
-                        let action = $"/_ui/spaces/{sid}/resources/create"
-                        let formTag8 = UiHtml.enhancedPostForm action []
-                        formTag8 {
-                            UiHtml.antiforgeryInput token
-                            UiHtml.hidden "Kind" "http"
-                            field "Name" (UiHtml.textInput "Name" String.Empty true "Core API") None
-                            field "Description" (UiHtml.textInput "Description" String.Empty true "Internal API") None
-                            field "Base URL" (UiHtml.textInput "BaseUrl" String.Empty true "https://example.internal") None
-                            h3 () { "Default headers" }
-                            kvRows "Header" []
-                            UiHtml.submitButton "Create HTTP resource"
-                        }
-                    }
-            }
+            if permissions.CreateResource then
+                modalDialog
+                    createResourceModalId
+                    "Create resource"
+                    (Some "Create an HTTP API or PostgreSQL connection for apps in this space.")
+                    (resourceForm token $"/_ui/spaces/{sid}/resources/create" "Create resource" None)
         }
 
     let appEditor (token: string) (space: SpaceData) (app: AppData) (resource: ResourceData) =
