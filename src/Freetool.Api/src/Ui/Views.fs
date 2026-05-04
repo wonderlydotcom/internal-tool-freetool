@@ -195,6 +195,8 @@ module Views =
             }
         }
 
+    let private keyValuePairDto (pair: KeyValuePair) : KeyValuePairDto = { Key = pair.Key; Value = pair.Value }
+
     let private kvRows (namePrefix: string) (pairs: KeyValuePairDto list) =
         let container = UiHtml.attrs [ "class", "kv-rows"; "data-kv-rows", "true" ] (div ())
 
@@ -202,20 +204,218 @@ module Views =
             for _, pair in pairs |> List.indexed do
                 div (class' = "kv-row") {
                     UiHtml.textInput $"{namePrefix}Key" pair.Key false "Key"
-                    UiHtml.textInput $"{namePrefix}Value" pair.Value false "Value"
-                    let removeButton = UiHtml.attrs [ "type", "button"; "class", "button button-ghost"; "data-remove-row", "true" ] (button ())
+                    UiHtml.textInput $"{namePrefix}Value" pair.Value false "Value or @InputName"
+
+                    let removeButton =
+                        UiHtml.attrs [ "type", "button"; "class", "button button-ghost"; "data-remove-row", "true" ] (button ())
+
                     removeButton { "Remove" }
                 }
 
             div (class' = "kv-row kv-row-template") {
                 UiHtml.textInput $"{namePrefix}Key" String.Empty false "Key"
-                UiHtml.textInput $"{namePrefix}Value" String.Empty false "Value"
-                let removeButton = UiHtml.attrs [ "type", "button"; "class", "button button-ghost"; "data-remove-row", "true" ] (button ())
+                UiHtml.textInput $"{namePrefix}Value" String.Empty false "Value or @InputName"
+
+                let removeButton =
+                    UiHtml.attrs [ "type", "button"; "class", "button button-ghost"; "data-remove-row", "true" ] (button ())
+
                 removeButton { "Remove" }
             }
 
-            let addButton = UiHtml.attrs [ "type", "button"; "class", "button button-secondary"; "data-add-kv-row", "true" ] (button ())
+            let addButton =
+                UiHtml.attrs [ "type", "button"; "class", "button button-secondary"; "data-add-kv-row", "true" ] (button ())
+
             addButton { "Add row" }
+        }
+
+    let private csv (values: string list) = String.Join(", ", values)
+
+    let private inputTypeFormValue (inputType: InputType) =
+        match inputType.Value with
+        | InputTypeValue.Email -> "email"
+        | InputTypeValue.Date -> "date"
+        | InputTypeValue.Text _ -> "text"
+        | InputTypeValue.Integer -> "integer"
+        | InputTypeValue.Boolean -> "boolean"
+        | InputTypeValue.Currency SupportedCurrency.USD -> "currency"
+        | InputTypeValue.MultiEmail _ -> "multi-email"
+        | InputTypeValue.MultiDate _ -> "multi-date"
+        | InputTypeValue.MultiText _ -> "multi-text"
+        | InputTypeValue.MultiInteger _ -> "multi-integer"
+        | InputTypeValue.Radio _ -> "radio"
+
+    let private inputTypeConfigValue (inputType: InputType) =
+        match inputType.Value with
+        | InputTypeValue.Text maxLength -> string maxLength
+        | InputTypeValue.MultiEmail emails -> emails |> List.map string |> csv
+        | InputTypeValue.MultiDate dates -> dates |> List.map (fun date -> date.ToString("yyyy-MM-dd")) |> csv
+        | InputTypeValue.MultiText(maxLength, allowedValues) -> $"{maxLength}|{csv allowedValues}"
+        | InputTypeValue.MultiInteger values -> values |> List.map string |> csv
+        | InputTypeValue.Radio options -> options |> List.map (fun option -> option.Value) |> csv
+        | _ -> String.Empty
+
+    let private inputTypeOption (selectedValue: string) (value: string) (labelText: string) =
+        let tag = UiHtml.attrs ([ "value", value ] @ UiHtml.selectedAttr (selectedValue = value)) (option ())
+        tag { labelText }
+
+    let private inputRows (inputs: Input list) =
+        let row (input: Input option) (template: bool) =
+            let title = input |> Option.map (fun value -> value.Title) |> Option.defaultValue String.Empty
+            let description = input |> Option.bind (fun value -> value.Description) |> Option.defaultValue String.Empty
+            let selectedType = input |> Option.map (fun value -> inputTypeFormValue value.Type) |> Option.defaultValue "text"
+            let requiredValue = input |> Option.map (fun value -> if value.Required then "true" else "false") |> Option.defaultValue "false"
+            let defaultValue = input |> Option.map UiFormat.defaultValue |> Option.defaultValue String.Empty
+            let typeConfig = input |> Option.map (fun value -> inputTypeConfigValue value.Type) |> Option.defaultValue String.Empty
+            let rowClass = if template then "input-row input-row-template" else "input-row"
+
+            div (class' = rowClass) {
+                UiHtml.textInput "InputTitle" title false "Input title"
+                UiHtml.textInput "InputDescription" description false "Description"
+
+                let typeSelect = UiHtml.attrs [ "name", "InputType"; "aria-label", "Input type" ] (select ())
+
+                typeSelect {
+                    inputTypeOption selectedType "text" "Text"
+                    inputTypeOption selectedType "email" "Email"
+                    inputTypeOption selectedType "date" "Date"
+                    inputTypeOption selectedType "integer" "Integer"
+                    inputTypeOption selectedType "boolean" "Boolean"
+                    inputTypeOption selectedType "currency" "Currency (USD)"
+                    inputTypeOption selectedType "radio" "Radio"
+                    inputTypeOption selectedType "multi-email" "Email choices"
+                    inputTypeOption selectedType "multi-date" "Date choices"
+                    inputTypeOption selectedType "multi-text" "Text choices"
+                    inputTypeOption selectedType "multi-integer" "Integer choices"
+                }
+
+                let requiredSelect = UiHtml.attrs [ "name", "InputRequired"; "aria-label", "Required" ] (select ())
+
+                requiredSelect {
+                    UiHtml.optionTag "false" "Optional" (requiredValue = "false")
+                    UiHtml.optionTag "true" "Required" (requiredValue = "true")
+                }
+
+                UiHtml.textInput "InputDefaultValue" defaultValue false "Default value"
+                UiHtml.textInput "InputTypeConfig" typeConfig false "Max length or comma options"
+
+                let removeButton =
+                    UiHtml.attrs [ "type", "button"; "class", "button button-ghost"; "data-remove-row", "true" ] (button ())
+
+                removeButton { "Remove" }
+            }
+
+        let container = UiHtml.attrs [ "class", "input-rows"; "data-input-rows", "true" ] (div ())
+
+        container {
+            for input in inputs do
+                row (Some input) false
+
+            row None true
+
+            let addButton =
+                UiHtml.attrs [ "type", "button"; "class", "button button-secondary"; "data-add-input-row", "true" ] (button ())
+
+            addButton { "Add input" }
+        }
+
+    let private methodSelect (selectedMethod: string) =
+        let selectTag = UiHtml.attrs [ "name", "HttpMethod"; "required", "required" ] (select ())
+
+        selectTag {
+            for method in [ "GET"; "POST"; "PUT"; "PATCH"; "DELETE" ] do
+                UiHtml.optionTag method method (String.Equals(selectedMethod, method, StringComparison.OrdinalIgnoreCase))
+        }
+
+    let private resourceKindValue (kind: ResourceKind) =
+        match kind with
+        | ResourceKind.Sql -> "sql"
+        | ResourceKind.Http -> "http"
+
+    let private appResourceSection (kind: ResourceKind) (currentKind: ResourceKind option) =
+        let kindValue = resourceKindValue kind
+
+        let hiddenAttrs =
+            match currentKind with
+            | Some selected when selected <> kind -> [ "hidden", "hidden" ]
+            | _ -> []
+
+        UiHtml.attrs ([ "class", "app-resource-section"; "data-resource-kind-section", kindValue ] @ hiddenAttrs) (section ())
+
+    let private templateHelpText =
+        "Template values can reference app inputs with @InputName or @\"Input Name\" and expressions with {{ ... }}."
+
+    let private appConfigurationFields (resourceKind: ResourceKind option) (inputs: Input list) (app: AppData option) =
+        let httpMethod = app |> Option.map (fun value -> value.HttpMethod.ToString()) |> Option.defaultValue "GET"
+        let urlPath = app |> Option.bind (fun value -> value.UrlPath) |> Option.defaultValue String.Empty
+        let urlParameters = app |> Option.map (fun value -> value.UrlParameters |> List.map keyValuePairDto) |> Option.defaultValue []
+        let headers = app |> Option.map (fun value -> value.Headers |> List.map keyValuePairDto) |> Option.defaultValue []
+        let body = app |> Option.map (fun value -> value.Body |> List.map keyValuePairDto) |> Option.defaultValue []
+        let useDynamicJsonBody = app |> Option.map (fun value -> value.UseDynamicJsonBody) |> Option.defaultValue false
+        let rawSql = app |> Option.bind (fun value -> value.SqlConfig) |> Option.bind (fun config -> config.RawSql) |> Option.defaultValue "select 1"
+
+        div (class' = "app-builder-fields") {
+            section (class' = "form-section") {
+                h3 () { "Inputs" }
+                p (class' = "muted") { templateHelpText }
+                p (class' = "muted") { "Type config is optional: use a max length for text, comma-separated options for radio/choices, or max|option1, option2 for text choices." }
+                inputRows inputs
+            }
+
+            let httpSection = appResourceSection ResourceKind.Http resourceKind
+
+            httpSection {
+                h3 () { "HTTP request" }
+                div (class' = "form-grid") {
+                    field "HTTP method" (methodSelect httpMethod) None
+                    field "URL path" (UiHtml.textInput "UrlPath" urlPath false "/customers/@CustomerId") None
+                }
+
+                div (class' = "form-section") {
+                    h3 () { "Query parameters" }
+                    p (class' = "muted") { templateHelpText }
+                    kvRows "UrlParameter" urlParameters
+                }
+
+                div (class' = "form-section") {
+                    h3 () { "Headers" }
+                    p (class' = "muted") { templateHelpText }
+                    kvRows "Header" headers
+                }
+
+                div (class' = "form-section") {
+                    h3 () { "JSON body" }
+                    label (class' = "checkbox-field") {
+                        UiHtml.attrs ([ "type", "checkbox"; "name", "UseDynamicJsonBody"; "value", "true"; "data-dynamic-body-checkbox", "true" ] @ UiHtml.checkedAttr useDynamicJsonBody) (input ())
+                        span () { "Collect JSON key/value pairs at run time" }
+                    }
+
+                    let staticBodyAttrs =
+                        [ "data-static-body-section", "true" ]
+                        @ if useDynamicJsonBody then [ "hidden", "hidden" ] else []
+
+                    let staticBodySection = UiHtml.attrs staticBodyAttrs (div ())
+
+                    staticBodySection { kvRows "Body" body }
+
+                    let dynamicHelpAttrs =
+                        [ "class", "muted"; "data-dynamic-body-help", "true" ]
+                        @ if useDynamicJsonBody then [] else [ "hidden", "hidden" ]
+
+                    let dynamicHelp = UiHtml.attrs dynamicHelpAttrs (p ())
+                    dynamicHelp { "Users will provide JSON body key/value pairs when running this app." }
+                }
+            }
+
+            let sqlSection = appResourceSection ResourceKind.Sql resourceKind
+
+            sqlSection {
+                h3 () { "SQL request" }
+                label (class' = "field") {
+                    span () { "Raw SQL" }
+                    UiHtml.textareaInput "RawSql" rawSql 10
+                    small () { templateHelpText }
+                }
+            }
         }
 
     let private spaceTabs (space: SpaceData) (active: string) =
@@ -315,21 +515,36 @@ module Views =
 
     let private createAppForm (token: string) (sid: string) (fid: string) (resources: ResourceData list) =
         let action = $"/_ui/spaces/{sid}/apps/create"
-        let formTag = UiHtml.enhancedPostForm action []
+        let formTag = UiHtml.enhancedPostForm action [ "data-app-config-form", "true" ]
 
         formTag {
             UiHtml.antiforgeryInput token
             UiHtml.hidden "FolderId" fid
             field "App name" (UiHtml.textInput "Name" String.Empty true "Customer lookup") None
+            field "Description" (UiHtml.textInput "Description" String.Empty false "What this app does") None
             label (class' = "field") {
                 span () { "Resource" }
-                let selectTag = UiHtml.attrs [ "name", "ResourceId"; "required", "required" ] (select ())
+
+                let selectTag =
+                    UiHtml.attrs
+                        [ "name", "ResourceId"
+                          "required", "required"
+                          "data-app-resource-select", "true" ]
+                        (select ())
+
                 selectTag {
                     option (value = "") { "Select resource" }
                     for resource in resources do
-                        option (value = resourceId resource) { resource.Name.Value }
+                        let optionTag =
+                            UiHtml.attrs
+                                [ "value", resourceId resource
+                                  "data-resource-kind", resourceKindValue resource.ResourceKind ]
+                                (option ())
+
+                        optionTag { resource.Name.Value }
                 }
             }
+            appConfigurationFields None [] None
             UiHtml.submitButton "Create app"
         }
 
@@ -634,47 +849,11 @@ module Views =
             }
 
             section (class' = "card") {
-                cardHeader "Inputs" (Some "Plain fields replace the previous rich placeholder editor. Use @InputName, @\"Input Name\", and {{ expression }} syntax in request templates.")
-                div (class' = "table-wrap") {
-                    table () {
-                        thead () {
-                            tr () {
-                                th () { "Title" }
-                                th () { "Type" }
-                                th () { "Required" }
-                                th () { "Default" }
-                            }
-                        }
-                        tbody () {
-                            for input in app.Inputs do
-                                tr () {
-                                    td () { input.Title }
-                                    td () { UiFormat.inputType input.Type }
-                                    td () { if input.Required then "Yes" else "No" }
-                                    td () { UiFormat.defaultValue input }
-                                }
-                        }
-                    }
-                }
-            }
-
-            section (class' = "card") {
-                cardHeader "Request configuration" (Some "Edit HTTP method, URL path, SQL/raw templates, headers, parameters, and body as plain text.")
-                let formTag11 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/apps/{aid}/config" []
+                cardHeader "Build configuration" (Some "Edit inputs and request templates. Use @InputName, @\"Input Name\", and {{ expression }} syntax in values.")
+                let formTag11 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/apps/{aid}/config" [ "data-app-config-form", "true" ]
                 formTag11 {
                     UiHtml.antiforgeryInput token
-                    div (class' = "form-grid") {
-                        field "HTTP method" (UiHtml.textInput "HttpMethod" (app.HttpMethod.ToString()) true "GET") None
-                        field "URL path" (UiHtml.textInput "UrlPath" (app.UrlPath |> Option.defaultValue String.Empty) false "/customers/@CustomerId") None
-                    }
-                    label (class' = "field") {
-                        span () { "Raw SQL (for SQL apps)" }
-                        UiHtml.textareaInput "RawSql" (app.SqlConfig |> Option.bind (fun config -> config.RawSql) |> Option.defaultValue String.Empty) 8
-                    }
-                    label (class' = "checkbox-field") {
-                        UiHtml.checkbox "UseDynamicJsonBody" "true" app.UseDynamicJsonBody
-                        span () { "Use dynamic JSON body at run time" }
-                    }
+                    appConfigurationFields (Some resource.ResourceKind) app.Inputs (Some app)
                     UiHtml.submitButton "Save configuration"
                 }
             }
