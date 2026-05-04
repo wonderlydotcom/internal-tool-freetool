@@ -204,7 +204,12 @@ module Views =
             for _, pair in pairs |> List.indexed do
                 div (class' = "kv-row") {
                     UiHtml.textInput $"{namePrefix}Key" pair.Key false "Key"
-                    UiHtml.textInput $"{namePrefix}Value" pair.Value false "Value or @InputName"
+                    UiHtml.textInputWithAttrs
+                        $"{namePrefix}Value"
+                        pair.Value
+                        false
+                        "Value or @InputName"
+                        [ "data-template-input", "true" ]
 
                     let removeButton =
                         UiHtml.attrs [ "type", "button"; "class", "button button-ghost"; "data-remove-row", "true" ] (button ())
@@ -214,7 +219,12 @@ module Views =
 
             div (class' = "kv-row kv-row-template") {
                 UiHtml.textInput $"{namePrefix}Key" String.Empty false "Key"
-                UiHtml.textInput $"{namePrefix}Value" String.Empty false "Value or @InputName"
+                UiHtml.textInputWithAttrs
+                    $"{namePrefix}Value"
+                    String.Empty
+                    false
+                    "Value or @InputName"
+                    [ "data-template-input", "true" ]
 
                 let removeButton =
                     UiHtml.attrs [ "type", "button"; "class", "button button-ghost"; "data-remove-row", "true" ] (button ())
@@ -367,7 +377,10 @@ module Views =
                 h3 () { "HTTP request" }
                 div (class' = "form-grid") {
                     field "HTTP method" (methodSelect httpMethod) None
-                    field "URL path" (UiHtml.textInput "UrlPath" urlPath false "/customers/@CustomerId") None
+                    field
+                        "URL path"
+                        (UiHtml.textInputWithAttrs "UrlPath" urlPath false "/customers/@CustomerId" [ "data-template-input", "true" ])
+                        None
                 }
 
                 div (class' = "form-section") {
@@ -412,7 +425,7 @@ module Views =
                 h3 () { "SQL request" }
                 label (class' = "field") {
                     span () { "Raw SQL" }
-                    UiHtml.textareaInput "RawSql" rawSql 10
+                    UiHtml.textareaInputWithAttrs "RawSql" rawSql 10 [ "data-template-input", "true" ]
                     small () { templateHelpText }
                 }
             }
