@@ -192,6 +192,21 @@ th { color: var(--muted); font-size: .85rem; }
 .permissions-legend { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-top: .9rem; color: var(--muted); font-size: .9rem; }
 .code-block { padding: 1rem; border-radius: 12px; overflow: auto; background: #0f172a; color: #e2e8f0; }
 .resource-icon { width: 40px; height: 40px; object-fit: contain; }
+.resource-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 1rem; }
+.resource-card { display: grid; gap: .85rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+.resource-card-header { display: flex; align-items: flex-start; gap: .75rem; }
+.resource-card-header h3 { margin-bottom: .2rem; }
+.resource-card-header p { color: var(--muted); margin-bottom: 0; overflow-wrap: anywhere; }
+.resource-meta { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
+.resource-detail-list { display: grid; gap: .65rem; }
+.resource-detail-list > div { display: grid; gap: .2rem; }
+.resource-detail-list strong { color: #334155; font-size: .85rem; }
+.resource-detail-list code { width: fit-content; max-width: 100%; padding: .3rem .45rem; border-radius: .4rem; background: var(--surface-muted); overflow-wrap: anywhere; white-space: normal; }
+.resource-form-fields { display: grid; gap: .85rem; }
+.resource-form-kind-section { display: grid; gap: .85rem; margin-top: .35rem; }
+.resource-toggle-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+.resource-toggle-card { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .85rem; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-muted); }
+.resource-toggle-card small { display: block; color: var(--muted); font-weight: 400; }
 .audit-card { display: grid; gap: .75rem; }
 .audit-meta { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; color: var(--muted); }
 .pagination { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
@@ -238,6 +253,8 @@ th { color: var(--muted); font-size: .85rem; }
   .input-row-remove { justify-self: stretch; }
   .input-row-remove-button { width: 100%; }
   .resource-default-row { grid-template-columns: 1fr; }
+  .resource-grid { grid-template-columns: 1fr; }
+  .resource-toggle-grid { grid-template-columns: 1fr; }
   .form-actions { justify-content: stretch; }
   .form-actions .button { width: 100%; }
   .dirty-status { width: 100%; }

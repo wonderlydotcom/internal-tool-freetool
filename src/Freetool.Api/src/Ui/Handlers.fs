@@ -1668,13 +1668,14 @@ module Handlers =
                                 DatabaseHost = formValue posted "DatabaseHost"
                                 DatabasePort = formValue posted "DatabasePort" |> parsePositiveInt 5432
                                 DatabaseEngine =
-                                    optionalFormValue posted "DatabaseEngine" |> Option.defaultValue "PostgreSQL"
+                                    optionalFormValue posted "DatabaseEngine" |> Option.defaultValue "POSTGRES"
                                 DatabaseAuthScheme =
-                                    optionalFormValue posted "DatabaseAuthScheme" |> Option.defaultValue "Password"
+                                    optionalFormValue posted "DatabaseAuthScheme"
+                                    |> Option.defaultValue "USERNAME_PASSWORD"
                                 DatabaseUsername = formValue posted "DatabaseUsername"
                                 DatabasePassword = optionalFormValue posted "DatabasePassword"
                                 UseSsl = formValues posted "UseSsl" |> List.contains "true"
-                                EnableSshTunnel = false
+                                EnableSshTunnel = formValues posted "EnableSshTunnel" |> List.contains "true"
                                 ConnectionOptions = keyValuePairs posted "ConnectionOption"
                             }
                         else
@@ -1707,6 +1708,192 @@ module Handlers =
                                     "error"
                                     (UiFormat.domainError error)
             })
+
+    let updateResource (spaceId: string) (resourceId: string) : EndpointHandler =
+        fun ctx -> task {
+            do! validatePost ctx
+            let! posted = form ctx
+            let target = $"/spaces/{spaceId}/resources"
+
+            match tryResourceId resourceId with
+            | None -> return! redirectWithFlash ctx target "error" "Invalid resource id."
+            | Some rid ->
+                let! resource = (resources ctx).GetByIdAsync rid
+
+                match resource with
+                | None -> return! redirectWithFlash ctx target "error" "Resource not found."
+                | Some resource when resource.State.SpaceId.Value.ToString() <> spaceId ->
+                    return! redirectWithFlash ctx target "error" "Resource not found in this space."
+                | Some resource ->
+                    let! allowed = hasSpacePermission ctx resource.State.SpaceId AuthRelation.ResourceEdit
+
+                    if not allowed then
+                        return! redirectWithFlash ctx target "error" "You do not have permission to edit resources."
+                    else
+                        let actor = UiContext.actorUserId ctx
+                        let handler = resourceHandler ctx
+                        let mutable changed = false
+                        let mutable firstError: DomainError option = None
+
+                        let keyValueTuples (pairs: KeyValuePair list) =
+                            pairs |> List.map (fun pair -> pair.Key, pair.Value)
+
+                        let dtoTuples (pairs: KeyValuePairDto list) =
+                            pairs |> List.map (fun pair -> pair.Key, pair.Value)
+
+                        let applyIfChanged hasChanged command = task {
+                            if hasChanged && firstError.IsNone then
+                                changed <- true
+                                let! result = handler.HandleCommand command
+
+                                match result with
+                                | Error error -> firstError <- Some error
+                                | Ok _ -> ()
+                        }
+
+                        let submittedName = formValue posted "Name"
+                        let submittedDescription = formValue posted "Description"
+
+                        do!
+                            applyIfChanged
+                                (submittedName <> resource.State.Name.Value)
+                                (UpdateResourceName(actor, resourceId, { Name = submittedName }))
+
+                        do!
+                            applyIfChanged
+                                (submittedDescription <> resource.State.Description.Value)
+                                (UpdateResourceDescription(actor, resourceId, { Description = submittedDescription }))
+
+                        match resource.State.ResourceKind with
+                        | ResourceKind.Http ->
+                            let submittedBaseUrl = formValue posted "BaseUrl"
+
+                            let currentBaseUrl =
+                                resource.State.BaseUrl |> Option.map string |> Option.defaultValue String.Empty
+
+                            let submittedUrlParameters = keyValuePairs posted "UrlParameter"
+                            let submittedHeaders = keyValuePairs posted "Header"
+                            let submittedBody = keyValuePairs posted "Body"
+
+                            let displayedHeaderTuples =
+                                resource.State.Headers
+                                |> keyValueTuples
+                                |> AuthorizationHeaderRedaction.redactTupleHeaders
+
+                            do!
+                                applyIfChanged
+                                    (submittedBaseUrl <> currentBaseUrl)
+                                    (UpdateResourceBaseUrl(actor, resourceId, { BaseUrl = submittedBaseUrl }))
+
+                            do!
+                                applyIfChanged
+                                    (dtoTuples submittedUrlParameters <> keyValueTuples resource.State.UrlParameters)
+                                    (UpdateResourceUrlParameters(
+                                        actor,
+                                        resourceId,
+                                        {
+                                            UrlParameters = submittedUrlParameters
+                                        }
+                                    ))
+
+                            do!
+                                applyIfChanged
+                                    (dtoTuples submittedHeaders <> displayedHeaderTuples)
+                                    (UpdateResourceHeaders(actor, resourceId, { Headers = submittedHeaders }))
+
+                            do!
+                                applyIfChanged
+                                    (dtoTuples submittedBody <> keyValueTuples resource.State.Body)
+                                    (UpdateResourceBody(actor, resourceId, { Body = submittedBody }))
+                        | ResourceKind.Sql ->
+                            let submittedDatabaseName = formValue posted "DatabaseName"
+                            let submittedDatabaseHost = formValue posted "DatabaseHost"
+                            let submittedDatabasePort = formValue posted "DatabasePort" |> parsePositiveInt 5432
+
+                            let submittedDatabaseEngine =
+                                optionalFormValue posted "DatabaseEngine" |> Option.defaultValue "POSTGRES"
+
+                            let submittedDatabaseAuthScheme =
+                                optionalFormValue posted "DatabaseAuthScheme"
+                                |> Option.defaultValue "USERNAME_PASSWORD"
+
+                            let submittedDatabaseUsername = formValue posted "DatabaseUsername"
+                            let submittedDatabasePassword = optionalFormValue posted "DatabasePassword"
+                            let submittedUseSsl = formValues posted "UseSsl" |> List.contains "true"
+
+                            let submittedEnableSshTunnel =
+                                formValues posted "EnableSshTunnel" |> List.contains "true"
+
+                            let submittedConnectionOptions = keyValuePairs posted "ConnectionOption"
+
+                            let currentDatabaseName =
+                                resource.State.DatabaseName
+                                |> Option.map string
+                                |> Option.defaultValue String.Empty
+
+                            let currentDatabaseHost =
+                                resource.State.DatabaseHost
+                                |> Option.map string
+                                |> Option.defaultValue String.Empty
+
+                            let currentDatabasePort =
+                                resource.State.DatabasePort
+                                |> Option.map (fun value -> value.Value)
+                                |> Option.defaultValue 5432
+
+                            let currentDatabaseEngine =
+                                resource.State.DatabaseEngine
+                                |> Option.map string
+                                |> Option.defaultValue "POSTGRES"
+
+                            let currentDatabaseAuthScheme =
+                                resource.State.DatabaseAuthScheme
+                                |> Option.map string
+                                |> Option.defaultValue "USERNAME_PASSWORD"
+
+                            let currentDatabaseUsername =
+                                resource.State.DatabaseUsername
+                                |> Option.map string
+                                |> Option.defaultValue String.Empty
+
+                            let databaseChanged =
+                                submittedDatabaseName <> currentDatabaseName
+                                || submittedDatabaseHost <> currentDatabaseHost
+                                || submittedDatabasePort <> currentDatabasePort
+                                || submittedDatabaseEngine <> currentDatabaseEngine
+                                || submittedDatabaseAuthScheme <> currentDatabaseAuthScheme
+                                || submittedDatabaseUsername <> currentDatabaseUsername
+                                || submittedDatabasePassword.IsSome
+                                || submittedUseSsl <> resource.State.UseSsl
+                                || submittedEnableSshTunnel <> resource.State.EnableSshTunnel
+                                || dtoTuples submittedConnectionOptions
+                                   <> keyValueTuples resource.State.ConnectionOptions
+
+                            do!
+                                applyIfChanged
+                                    databaseChanged
+                                    (UpdateResourceDatabaseConfig(
+                                        actor,
+                                        resourceId,
+                                        {
+                                            DatabaseName = submittedDatabaseName
+                                            DatabaseHost = submittedDatabaseHost
+                                            DatabasePort = submittedDatabasePort
+                                            DatabaseEngine = submittedDatabaseEngine
+                                            DatabaseAuthScheme = submittedDatabaseAuthScheme
+                                            DatabaseUsername = submittedDatabaseUsername
+                                            DatabasePassword = submittedDatabasePassword
+                                            UseSsl = submittedUseSsl
+                                            EnableSshTunnel = submittedEnableSshTunnel
+                                            ConnectionOptions = submittedConnectionOptions
+                                        }
+                                    ))
+
+                        match firstError with
+                        | Some error -> return! redirectWithFlash ctx target "error" (UiFormat.domainError error)
+                        | None when changed -> return! redirectWithFlash ctx target "success" "Resource saved."
+                        | None -> return! redirectWithFlash ctx target "info" "No resource changes to save."
+        }
 
     let deleteResource (spaceId: string) (resourceId: string) : EndpointHandler =
         fun ctx -> task {

@@ -34,6 +34,7 @@ module Routes =
             routef "/_ui/spaces/{%s}/folders/{%s}/rename" Handlers.renameFolder
             routef "/_ui/spaces/{%s}/folders/{%s}/delete" Handlers.deleteFolder
             routef "/_ui/spaces/{%s}/resources/create" Handlers.createResource
+            routef "/_ui/spaces/{%s}/resources/{%s}/update" Handlers.updateResource
             routef "/_ui/spaces/{%s}/resources/{%s}/delete" Handlers.deleteResource
             routef "/_ui/spaces/{%s}/apps/create" Handlers.createApp
             routef "/_ui/spaces/{%s}/apps/{%s}/delete" Handlers.deleteApp
