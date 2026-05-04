@@ -71,6 +71,11 @@
   let activeTemplateTrigger = null;
   let activeTemplateSuggestions = [];
   let activeTemplateSuggestionIndex = 0;
+  let activeExpressionControl = null;
+  let activeExpressionRange = null;
+  let activeExpressionMode = "insert";
+  let lastExpressionBraceControl = null;
+  let lastExpressionBraceTime = 0;
 
   function escapeHtml(value) {
     return value.replace(/[&<>"']/g, (char) => {
@@ -100,6 +105,9 @@
   }
 
   function templateContext(control) {
+    if (control?.matches("[data-expression-editor-input]") && activeExpressionControl) {
+      return templateContext(activeExpressionControl);
+    }
     return control.closest("[data-app-config-form]") || document;
   }
 
@@ -150,6 +158,118 @@
     return title.startsWith("current_user.");
   }
 
+  function createVariableRegex() {
+    return /@(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?))/g;
+  }
+
+  function extractExpressionVariables(expression) {
+    const variables = [];
+    for (const match of expression.matchAll(createVariableRegex())) {
+      const name = match[1] ?? match[2];
+      if (name && !variables.includes(name)) variables.push(name);
+    }
+    return variables;
+  }
+
+  function isJsonExpression(expression) {
+    const trimmed = expression.trim();
+    return trimmed.startsWith("{") || trimmed.startsWith("[");
+  }
+
+  function isIndexInJsonString(expression, index) {
+    let inString = false;
+    for (let i = 0; i < index; i += 1) {
+      if (expression[i] !== '"') continue;
+
+      let backslashes = 0;
+      for (let j = i - 1; j >= 0 && expression[j] === "\\"; j -= 1) {
+        backslashes += 1;
+      }
+      if (backslashes % 2 === 0) inString = !inString;
+    }
+    return inString;
+  }
+
+  function replaceVariablesForJsonValidation(expression) {
+    let error = "";
+    const result = expression.replace(
+      createVariableRegex(),
+      (match, quotedName, unquotedName, offset) => {
+        if (error) return match;
+        if (isIndexInJsonString(expression, offset)) {
+          error = "Variables cannot be used inside JSON strings; use @Var as a JSON value.";
+          return match;
+        }
+        const name = quotedName ?? unquotedName;
+        return name ? "0" : match;
+      }
+    );
+    return { result, error };
+  }
+
+  function normalizeExpressionForSyntax(expression) {
+    let variableIndex = 0;
+    return expression.replace(createVariableRegex(), (_match, quotedName, unquotedName) => {
+      const name = quotedName ?? unquotedName;
+      if (!name) return _match;
+      variableIndex += 1;
+      return `__var${variableIndex}`;
+    });
+  }
+
+  function validateExpression(expression, control) {
+    const trimmed = expression.trim();
+    const errors = [];
+    const referencedVariables = extractExpressionVariables(trimmed);
+    const validTitles = new Set(templateSuggestions(control).map((item) => item.title));
+
+    if (!trimmed) {
+      return {
+        isValid: false,
+        errors: ["Expression cannot be empty"],
+        referencedVariables,
+      };
+    }
+
+    referencedVariables.forEach((name) => {
+      if (currentUserTitle(name)) {
+        const property = name.slice("current_user.".length);
+        if (!currentUserSuggestions.some((suggestion) => suggestion.title === name)) {
+          errors.push(`Unknown current_user property: ${property}`);
+        }
+      } else if (!validTitles.has(name)) {
+        errors.push(`Unknown variable: ${name}`);
+      }
+    });
+
+    if (isJsonExpression(trimmed)) {
+      const { result, error } = replaceVariablesForJsonValidation(trimmed);
+      if (error) {
+        errors.push(error);
+      } else {
+        try {
+          JSON.parse(result);
+        } catch (parseError) {
+          errors.push(`JSON syntax error: ${parseError.message || String(parseError)}`);
+        }
+      }
+    } else {
+      try {
+        const normalized = normalizeExpressionForSyntax(trimmed);
+        if (/(^|[^=!<>])=(?!=)/.test(normalized)) {
+          throw new Error("Assignments are not supported");
+        }
+        // Parse only; the function is never invoked. This mirrors the old editor's
+        // JavaScript-like syntax checks without making client validation authoritative.
+        Function(`"use strict"; return (${normalized});`);
+      } catch (parseError) {
+        errors.push(`Syntax error: ${parseError.message || String(parseError)}`);
+      }
+    }
+
+    return { isValid: errors.length === 0, errors, referencedVariables };
+  }
+
   function highlightTemplateValue(value, control) {
     if (!value) return "";
 
@@ -166,7 +286,12 @@
       }
 
       if (token.startsWith("{{")) {
-        html += `<span class="template-token template-token-expression">${escapeHtml(token)}</span>`;
+        const expression = token.slice(2, -2).trim();
+        const validation = validateExpression(expression, control);
+        const tokenClass = validation.isValid
+          ? "template-token-expression"
+          : "template-token-expression template-token-invalid";
+        html += `<span class="template-token ${tokenClass}">${escapeHtml(token)}</span>`;
       } else {
         const title = match[1] ?? match[2] ?? "";
         const isValid = title && validTitles.has(title);
@@ -265,14 +390,19 @@
     return { start: atIndex, end: cursor, query: fragment };
   }
 
-  function ensureTemplatePopover() {
-    if (templatePopover) return templatePopover;
+  function templatePopoverOwner(control) {
+    return control?.closest("dialog") || document.body;
+  }
 
-    templatePopover = document.createElement("div");
-    templatePopover.className = "template-suggestions";
-    templatePopover.setAttribute("data-template-suggestions", "true");
-    templatePopover.hidden = true;
-    document.body.appendChild(templatePopover);
+  function ensureTemplatePopover(owner = document.body) {
+    if (!templatePopover) {
+      templatePopover = document.createElement("div");
+      templatePopover.className = "template-suggestions";
+      templatePopover.setAttribute("data-template-suggestions", "true");
+      templatePopover.hidden = true;
+    }
+
+    if (templatePopover.parentElement !== owner) owner.appendChild(templatePopover);
     return templatePopover;
   }
 
@@ -285,7 +415,7 @@
   }
 
   function positionTemplatePopover(control) {
-    const popover = ensureTemplatePopover();
+    const popover = ensureTemplatePopover(templatePopoverOwner(control));
     const rect = control.getBoundingClientRect();
     popover.style.left = `${rect.left}px`;
     popover.style.top = `${rect.bottom + 6}px`;
@@ -293,7 +423,7 @@
   }
 
   function renderTemplatePopover(control, trigger) {
-    const popover = ensureTemplatePopover();
+    const popover = ensureTemplatePopover(templatePopoverOwner(control));
     const query = trigger.query.toLowerCase();
     const suggestions = templateSuggestions(control).filter((item) =>
       item.title.toLowerCase().includes(query)
@@ -374,6 +504,174 @@
     control.focus();
   }
 
+  function expressionModal() {
+    return document.getElementById("template-expression-modal");
+  }
+
+  function expressionEditorInput() {
+    const modal = expressionModal();
+    const input = modal?.querySelector("[data-expression-editor-input]");
+    return input instanceof HTMLTextAreaElement ? input : null;
+  }
+
+  function expressionSaveButton() {
+    const modal = expressionModal();
+    const button = modal?.querySelector("[data-expression-modal-save]");
+    return button instanceof HTMLButtonElement ? button : null;
+  }
+
+  function expressionValidationElement() {
+    const modal = expressionModal();
+    const element = modal?.querySelector("[data-expression-validation]");
+    return element instanceof HTMLElement ? element : null;
+  }
+
+  function expressionRangeAtCursor(control) {
+    const cursor = control.selectionStart;
+    if (cursor === null) return null;
+
+    const pattern = /\{\{[\s\S]*?\}\}/g;
+    for (const match of control.value.matchAll(pattern)) {
+      const start = match.index || 0;
+      const end = start + match[0].length;
+      if (cursor >= start && cursor <= end) {
+        return {
+          start,
+          end,
+          expression: match[0].slice(2, -2).trim(),
+        };
+      }
+    }
+
+    return null;
+  }
+
+  function updateExpressionModalValidation() {
+    const input = expressionEditorInput();
+    const validationElement = expressionValidationElement();
+    const saveButton = expressionSaveButton();
+    if (!input || !validationElement || !saveButton) return;
+
+    const validation = validateExpression(input.value, activeExpressionControl || input);
+    validationElement.textContent = validation.isValid
+      ? "Expression is valid"
+      : validation.errors.join(", ");
+    validationElement.classList.toggle("is-valid", validation.isValid);
+    validationElement.classList.toggle("is-invalid", !validation.isValid);
+    saveButton.disabled = !validation.isValid;
+    saveButton.textContent = activeExpressionMode === "edit" ? "Save" : "Insert";
+    updateTemplateMirror(input);
+  }
+
+  function openExpressionModal(control, mode, range) {
+    const modal = expressionModal();
+    const input = expressionEditorInput();
+    if (!modal || !input) return;
+
+    activeExpressionControl = control;
+    activeExpressionRange = range;
+    activeExpressionMode = mode;
+
+    const title = modal.querySelector("#template-expression-title");
+    if (title) title.textContent = mode === "edit" ? "Edit Expression" : "Insert Expression";
+
+    input.value = range?.expression || "";
+    updateExpressionModalValidation();
+    closeTemplatePopover();
+
+    if (typeof modal.showModal === "function") modal.showModal();
+    else modal.setAttribute("open", "open");
+
+    window.setTimeout(() => {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+      updateTemplateMirror(input);
+    }, 0);
+  }
+
+  function closeExpressionModal() {
+    const modal = expressionModal();
+    if (modal?.open && typeof modal.close === "function") modal.close();
+    else modal?.removeAttribute("open");
+
+    activeExpressionControl = null;
+    activeExpressionRange = null;
+    activeExpressionMode = "insert";
+  }
+
+  function saveExpressionModal() {
+    const input = expressionEditorInput();
+    const control = activeExpressionControl;
+    if (!input || !control) return;
+
+    const expression = input.value.trim();
+    const validation = validateExpression(expression, control);
+    if (!validation.isValid) {
+      updateExpressionModalValidation();
+      return;
+    }
+
+    const selectionStart = control.selectionStart ?? control.value.length;
+    const selectionEnd = control.selectionEnd ?? selectionStart;
+    const range = activeExpressionRange || {
+      start: selectionStart,
+      end: selectionEnd,
+    };
+    const token = `{{ ${expression} }}`;
+    control.value = `${control.value.slice(0, range.start)}${token}${control.value.slice(range.end)}`;
+    const cursor = range.start + token.length;
+    control.setSelectionRange(cursor, cursor);
+    updateTemplateMirror(control);
+    control.dispatchEvent(new Event("input", { bubbles: true }));
+    closeExpressionModal();
+    control.focus();
+  }
+
+  function maybeOpenExpressionAtCursor(control) {
+    if (control.matches("[data-disable-expression-modal]")) return;
+    const range = expressionRangeAtCursor(control);
+    if (!range) return;
+    openExpressionModal(control, "edit", range);
+  }
+
+  function handleExpressionBraceShortcut(event, control) {
+    if (control.matches("[data-disable-expression-modal]")) return false;
+    if (event.key !== "{") {
+      lastExpressionBraceControl = null;
+      lastExpressionBraceTime = 0;
+      return false;
+    }
+
+    const cursor = control.selectionStart;
+    const selectionEnd = control.selectionEnd;
+    if (cursor === null || selectionEnd === null || cursor !== selectionEnd) {
+      lastExpressionBraceControl = control;
+      lastExpressionBraceTime = Date.now();
+      return false;
+    }
+
+    const now = Date.now();
+    const previousChar = control.value.slice(cursor - 1, cursor);
+    if (
+      previousChar === "{" &&
+      lastExpressionBraceControl === control &&
+      now - lastExpressionBraceTime < 500
+    ) {
+      event.preventDefault();
+      control.value = `${control.value.slice(0, cursor - 1)}${control.value.slice(cursor)}`;
+      control.setSelectionRange(cursor - 1, cursor - 1);
+      updateTemplateMirror(control);
+      openExpressionModal(control, "insert", { start: cursor - 1, end: cursor - 1 });
+      lastExpressionBraceControl = null;
+      lastExpressionBraceTime = 0;
+      return true;
+    }
+
+    lastExpressionBraceControl = control;
+    lastExpressionBraceTime = now;
+    return false;
+  }
+
   function updateAppResourceSections(form) {
     const select = form.querySelector("[data-app-resource-select]");
     if (!(select instanceof HTMLSelectElement)) return;
@@ -415,6 +713,9 @@
       maybeOpenTemplatePopover(templateInput);
     }
 
+    const expressionInput = closest(event.target, "[data-expression-editor-input]");
+    if (expressionInput) updateExpressionModalValidation();
+
     const inputTitle = closest(event.target, 'input[name="InputTitle"]');
     if (inputTitle instanceof HTMLInputElement) {
       const form = inputTitle.closest("[data-app-config-form]");
@@ -433,7 +734,18 @@
     const templateInput = closest(event.target, "[data-template-input]");
     if (!isTemplateControl(templateInput)) return;
 
-    const popover = ensureTemplatePopover();
+    if (handleExpressionBraceShortcut(event, templateInput)) return;
+
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      const editorInput = closest(event.target, "[data-expression-editor-input]");
+      if (editorInput) {
+        event.preventDefault();
+        saveExpressionModal();
+        return;
+      }
+    }
+
+    const popover = ensureTemplatePopover(templatePopoverOwner(templateInput));
     if (popover.hidden || !activeTemplateTrigger) return;
 
     if (event.key === "ArrowDown") {
@@ -521,6 +833,25 @@
       closeTemplatePopover();
     }
 
+    const expressionSave = closest(target, "[data-expression-modal-save]");
+    if (expressionSave) {
+      event.preventDefault();
+      saveExpressionModal();
+      return;
+    }
+
+    const expressionCancel = closest(target, "[data-expression-modal-cancel]");
+    if (expressionCancel) {
+      event.preventDefault();
+      closeExpressionModal();
+      return;
+    }
+
+    const clickedTemplateInput = closest(target, "[data-template-input]");
+    if (isTemplateControl(clickedTemplateInput)) {
+      window.setTimeout(() => maybeOpenExpressionAtCursor(clickedTemplateInput), 0);
+    }
+
     const addButton = closest(target, "[data-add-kv-row]");
     if (addButton) {
       const container = addButton.closest("[data-kv-rows]");
@@ -585,6 +916,13 @@
     if (confirmElement) {
       const message = confirmElement.getAttribute("data-confirm") || "Are you sure?";
       if (!window.confirm(message)) event.preventDefault();
+    }
+  });
+
+  document.addEventListener("cancel", (event) => {
+    if (event.target === expressionModal()) {
+      event.preventDefault();
+      closeExpressionModal();
     }
   });
 

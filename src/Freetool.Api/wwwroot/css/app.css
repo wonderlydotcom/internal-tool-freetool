@@ -95,6 +95,15 @@ textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, m
 .template-suggestion-item:hover, .template-suggestion-item.is-active { background: #e0ecff; color: #1d4ed8; }
 .template-suggestion-meta { color: var(--muted); font-size: .75rem; font-weight: 700; }
 .template-suggestion-empty { padding: .65rem .75rem; color: var(--muted); }
+.expression-modal { width: 720px; }
+.expression-validation { margin: .75rem 0 1rem; padding: .75rem .85rem; border: 1px solid #fecaca; border-radius: 12px; background: #fee2e2; color: #7f1d1d; font-weight: 650; }
+.expression-validation.is-valid { border-color: #86efac; background: #dcfce7; color: #14532d; }
+.expression-help { color: var(--muted); font-size: .86rem; }
+.expression-help-title { margin-bottom: .35rem; color: var(--text); font-weight: 800; }
+.expression-help ul { margin: 0; padding-left: 1.1rem; }
+.expression-help li { margin-bottom: .25rem; }
+.expression-help code { padding: .05rem .25rem; border-radius: .3rem; background: var(--surface-muted); color: var(--text); }
+.modal-footer { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1.25rem; }
 .checkbox-field { display: flex; align-items: center; gap: .5rem; margin: .8rem 0; }
 .checkbox-field input, .checkbox-grid input { width: auto; }
 .checkbox-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .5rem; }

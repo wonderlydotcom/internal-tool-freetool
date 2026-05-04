@@ -49,6 +49,113 @@ module LayoutView =
                 switchLink { "Switch user" }
             }
 
+    let private expressionEditorModal: HtmlElement =
+        let editor =
+            UiHtml.attrs
+                [
+                    "id", "template-expression-input"
+                    "rows", "5"
+                    "placeholder", "Type @ to insert variables, e.g. @Debit ? -1 * @Amount : @Amount"
+                    "data-template-input", "true"
+                    "data-expression-editor-input", "true"
+                    "data-disable-expression-modal", "true"
+                    "aria-describedby", "template-expression-help"
+                ]
+                (textarea ())
+
+        dialog (id = "template-expression-modal", class' = "modal expression-modal") {
+            section (class' = "modal-card") {
+                header (class' = "modal-header") {
+                    div () {
+                        h2 (id = "template-expression-title") { "Insert Expression" }
+
+                        p () {
+                            "Write a JavaScript-like expression or JSON object/array. Use @VariableName to reference inputs."
+                        }
+                    }
+
+                    let closeButton =
+                        UiHtml.attrs
+                            [
+                                "type", "button"
+                                "class", "modal-close"
+                                "data-expression-modal-cancel", "true"
+                                "aria-label", "Close"
+                            ]
+                            (button ())
+
+                    closeButton { "×" }
+                }
+
+                div (class' = "modal-scroll") {
+                    label (class' = "field") {
+                        span () { "Expression" }
+                        editor { "" }
+                    }
+
+                    let validation =
+                        UiHtml.attrs
+                            [
+                                "class", "expression-validation"
+                                "data-expression-validation", "true"
+                                "aria-live", "polite"
+                            ]
+                            (div ())
+
+                    validation { "Expression cannot be empty" }
+
+                    div (id = "template-expression-help", class' = "expression-help") {
+                        p (class' = "expression-help-title") { "Supported operations" }
+
+                        ul () {
+                            li () {
+                                raw
+                                    "Arithmetic: <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>%</code>"
+                            }
+
+                            li () {
+                                raw
+                                    "Comparison: <code>==</code>, <code>!=</code>, <code>&lt;</code>, <code>&gt;</code>, <code>&lt;=</code>, <code>&gt;=</code>"
+                            }
+
+                            li () { raw "Logical: <code>&amp;&amp;</code>, <code>||</code>, <code>!</code>" }
+                            li () { raw "Ternary: <code>condition ? valueIfTrue : valueIfFalse</code>" }
+
+                            li () {
+                                raw
+                                    "JSON: <code>{ &quot;key&quot;: @Var }</code> or <code>[ @Var, 1 ]</code>; use variables as JSON values."
+                            }
+                        }
+                    }
+
+                    footer (class' = "modal-footer") {
+                        let cancelButton =
+                            UiHtml.attrs
+                                [
+                                    "type", "button"
+                                    "class", "button button-ghost"
+                                    "data-expression-modal-cancel", "true"
+                                ]
+                                (button ())
+
+                        cancelButton { "Cancel" }
+
+                        let saveButton =
+                            UiHtml.attrs
+                                [
+                                    "type", "button"
+                                    "class", "button"
+                                    "data-expression-modal-save", "true"
+                                    "disabled", "disabled"
+                                ]
+                                (button ())
+
+                        saveButton { "Insert" }
+                    }
+                }
+            }
+        }
+
     let page (model: LayoutModel) (content: HtmlElement) : HtmlElement =
         let root = UiHtml.attrs [ "lang", "en" ] (html ())
 
@@ -99,6 +206,8 @@ module LayoutView =
                         content
                     }
                 }
+
+                expressionEditorModal
             }
         }
 
