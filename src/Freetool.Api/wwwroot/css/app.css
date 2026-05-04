@@ -221,6 +221,7 @@ th { color: var(--muted); font-size: .85rem; }
 .resource-toggle-card { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .85rem; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-muted); }
 .resource-toggle-card small { display: block; color: var(--muted); font-weight: 400; }
 .audit-card { display: grid; gap: .75rem; }
+.audit-filter-form { display: grid; gap: 1rem; }
 .audit-meta { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; color: var(--muted); }
 .pagination { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .pagination-status { color: var(--muted); font-weight: 700; margin-right: auto; }
