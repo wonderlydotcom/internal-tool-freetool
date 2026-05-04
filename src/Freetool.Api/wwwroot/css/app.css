@@ -166,6 +166,7 @@ textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, m
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: .75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
 th { color: var(--muted); font-size: .85rem; }
+.users-table tbody td { vertical-align: middle; }
 .detached-form { display: none; }
 .permissions-matrix-wrap { border: 1px solid var(--border); border-radius: 12px; }
 .permissions-form .permissions-matrix-wrap { margin-bottom: 1rem; }

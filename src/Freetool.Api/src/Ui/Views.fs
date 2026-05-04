@@ -1890,7 +1890,7 @@ module Views =
         section (class' = "card") {
             cardHeader "Users" (Some $"{List.length users} users")
             div (class' = "table-wrap") {
-                table () {
+                table (class' = "users-table") {
                     thead () {
                         tr () {
                             th () { "User" }
