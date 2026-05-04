@@ -405,6 +405,230 @@ module Views =
                 UiHtml.optionTag method method (String.Equals(selectedMethod, method, StringComparison.OrdinalIgnoreCase))
         }
 
+    let private sqlQueryModeValue mode =
+        match mode with
+        | SqlQueryMode.Gui -> "gui"
+        | SqlQueryMode.Raw -> "raw"
+
+    let private sqlFilterOperatorValue op =
+        match op with
+        | SqlFilterOperator.Equals -> "="
+        | SqlFilterOperator.NotEquals -> "!="
+        | SqlFilterOperator.GreaterThan -> ">"
+        | SqlFilterOperator.GreaterThanOrEqual -> ">="
+        | SqlFilterOperator.LessThan -> "<"
+        | SqlFilterOperator.LessThanOrEqual -> "<="
+        | SqlFilterOperator.Like -> "LIKE"
+        | SqlFilterOperator.ILike -> "ILIKE"
+        | SqlFilterOperator.In -> "IN"
+        | SqlFilterOperator.NotIn -> "NOT IN"
+        | SqlFilterOperator.IsNull -> "IS NULL"
+        | SqlFilterOperator.IsNotNull -> "IS NOT NULL"
+
+    let private sqlSortDirectionValue direction =
+        match direction with
+        | SqlSortDirection.Asc -> "ASC"
+        | SqlSortDirection.Desc -> "DESC"
+
+    let private sqlFilterOperatorSelect (selectedValue: string) =
+        let selectTag =
+            UiHtml.attrs [ "name", "SqlFilterOperator"; "aria-label", "Filter operator"; "data-sql-filter-operator", "true" ] (select ())
+
+        selectTag {
+            for op in [ "="; "!="; ">"; ">="; "<"; "<="; "IN"; "NOT IN"; "LIKE"; "ILIKE"; "IS NULL"; "IS NOT NULL" ] do
+                UiHtml.optionTag op op (selectedValue = op)
+        }
+
+    let private sqlSortDirectionSelect (selectedValue: string) =
+        let selectTag = UiHtml.attrs [ "name", "SqlOrderByDirection"; "aria-label", "Sort direction" ] (select ())
+
+        selectTag {
+            UiHtml.optionTag "ASC" "ASC" (selectedValue = "ASC")
+            UiHtml.optionTag "DESC" "DESC" (selectedValue = "DESC")
+        }
+
+    let private sqlModeToggle (selectedMode: string) =
+        div (class' = "sql-mode-toggle") {
+            for value, labelText in [ "gui", "GUI builder"; "raw", "Raw SQL" ] do
+                label (class' = if selectedMode = value then "sql-mode-option is-active" else "sql-mode-option") {
+                    let radio =
+                        UiHtml.attrs
+                            ([ "type", "radio"
+                               "name", "SqlMode"
+                               "value", value
+                               "data-sql-mode-control", "true" ]
+                             @ UiHtml.checkedAttr (selectedMode = value))
+                            (input ())
+
+                    radio
+                    span () { labelText }
+                }
+        }
+
+    let private sqlRowRemoveButton () =
+        let removeButton =
+            UiHtml.attrs [ "type", "button"; "class", "button button-ghost sql-row-remove-button"; "data-remove-row", "true" ] (button ())
+
+        removeButton { "Remove" }
+
+    let private sqlColumnRows (columns: string list) =
+        let row (value: string) (template: bool) =
+            let rowClass = if template then "sql-builder-row sql-column-row sql-row-template" else "sql-builder-row sql-column-row"
+
+            div (class' = rowClass) {
+                UiHtml.textInput "SqlColumn" value false "Column name, e.g. customers.email"
+                sqlRowRemoveButton ()
+            }
+
+        let container = UiHtml.attrs [ "class", "sql-builder-rows"; "data-sql-rows", "true" ] (div ())
+
+        container {
+            for column in columns do
+                row column false
+
+            row String.Empty true
+
+            let addButton =
+                UiHtml.attrs [ "type", "button"; "class", "button button-secondary"; "data-add-sql-row", "true" ] (button ())
+
+            addButton { "Add column" }
+        }
+
+    let private sqlFilterRows (filters: SqlFilter list) =
+        let row (filter: SqlFilter option) (template: bool) =
+            let column = filter |> Option.map (fun value -> value.Column) |> Option.defaultValue String.Empty
+            let selectedOperator = filter |> Option.map (fun value -> sqlFilterOperatorValue value.Operator) |> Option.defaultValue "="
+            let value = filter |> Option.bind (fun value -> value.Value) |> Option.defaultValue String.Empty
+            let rowClass = if template then "sql-builder-row sql-filter-row sql-row-template" else "sql-builder-row sql-filter-row"
+
+            div (class' = rowClass) {
+                UiHtml.textInput "SqlFilterColumn" column false "Column"
+                sqlFilterOperatorSelect selectedOperator
+                UiHtml.textInputWithAttrs
+                    "SqlFilterValue"
+                    value
+                    false
+                    "Value, @InputName, or comma list"
+                    [ "data-template-input", "true"; "data-sql-filter-value", "true" ]
+                sqlRowRemoveButton ()
+            }
+
+        let container = UiHtml.attrs [ "class", "sql-builder-rows"; "data-sql-rows", "true" ] (div ())
+
+        container {
+            for filter in filters do
+                row (Some filter) false
+
+            row None true
+
+            let addButton =
+                UiHtml.attrs [ "type", "button"; "class", "button button-secondary"; "data-add-sql-row", "true" ] (button ())
+
+            addButton { "Add filter" }
+        }
+
+    let private sqlOrderRows (orderBy: SqlOrderBy list) =
+        let row (order: SqlOrderBy option) (template: bool) =
+            let column = order |> Option.map (fun value -> value.Column) |> Option.defaultValue String.Empty
+            let direction = order |> Option.map (fun value -> sqlSortDirectionValue value.Direction) |> Option.defaultValue "ASC"
+            let rowClass = if template then "sql-builder-row sql-order-row sql-row-template" else "sql-builder-row sql-order-row"
+
+            div (class' = rowClass) {
+                UiHtml.textInput "SqlOrderByColumn" column false "Column"
+                sqlSortDirectionSelect direction
+                sqlRowRemoveButton ()
+            }
+
+        let container = UiHtml.attrs [ "class", "sql-builder-rows"; "data-sql-rows", "true" ] (div ())
+
+        container {
+            for order in orderBy do
+                row (Some order) false
+
+            row None true
+
+            let addButton =
+                UiHtml.attrs [ "type", "button"; "class", "button button-secondary"; "data-add-sql-row", "true" ] (button ())
+
+            addButton { "Add sort" }
+        }
+
+    let private sqlQueryConfigFields (config: SqlQueryConfig option) =
+        let selectedMode = config |> Option.map (fun value -> sqlQueryModeValue value.Mode) |> Option.defaultValue "gui"
+        let table = config |> Option.bind (fun value -> value.Table) |> Option.defaultValue String.Empty
+        let columns = config |> Option.map (fun value -> value.Columns) |> Option.defaultValue []
+        let filters = config |> Option.map (fun value -> value.Filters) |> Option.defaultValue []
+        let limit =
+            match config with
+            | None -> "100"
+            | Some value -> value.Limit |> Option.map string |> Option.defaultValue String.Empty
+        let orderBy = config |> Option.map (fun value -> value.OrderBy) |> Option.defaultValue []
+        let rawSql = config |> Option.bind (fun value -> value.RawSql) |> Option.defaultValue "select 1"
+        let rawSqlParams =
+            config
+            |> Option.map (fun value -> value.RawSqlParams |> List.map keyValuePairDto)
+            |> Option.defaultValue []
+
+        let builder = UiHtml.attrs [ "class", "sql-builder"; "data-sql-builder", "true" ] (div ())
+
+        builder {
+            sqlModeToggle selectedMode
+
+            let guiSectionAttrs =
+                [ "class", "sql-builder-panel"; "data-sql-mode-section", "gui" ]
+                @ UiHtml.whenAttr (selectedMode <> "gui") "hidden" "hidden"
+
+            let guiSection = UiHtml.attrs guiSectionAttrs (section ())
+
+            guiSection {
+                div (class' = "form-grid") {
+                    field "Table" (UiHtml.textInput "SqlTable" table false "public.customers") (Some "Required for GUI mode. Use schema.table when needed.")
+                    field
+                        "Limit"
+                        (UiHtml.attrs [ "type", "number"; "name", "SqlLimit"; "value", limit; "placeholder", "100" ] (input ()))
+                        (Some "Optional. Leave blank for no limit.")
+                }
+
+                div (class' = "form-section") {
+                    h3 () { "Columns" }
+                    p (class' = "muted") { "Leave empty to select all columns. Add one column per row for an explicit projection." }
+                    sqlColumnRows columns
+                }
+
+                div (class' = "form-section") {
+                    h3 () { "Filters" }
+                    p (class' = "muted") { "Filter values support @InputName and {{ expression }} templates. IN and NOT IN accept comma-separated values." }
+                    sqlFilterRows filters
+                }
+
+                div (class' = "form-section") {
+                    h3 () { "Order by" }
+                    p (class' = "muted") { "Add optional sort columns." }
+                    sqlOrderRows orderBy
+                }
+            }
+
+            let rawSectionAttrs =
+                [ "class", "sql-builder-panel"; "data-sql-mode-section", "raw" ]
+                @ UiHtml.whenAttr (selectedMode <> "raw") "hidden" "hidden"
+
+            let rawSection = UiHtml.attrs rawSectionAttrs (section ())
+
+            rawSection {
+                label (class' = "field") {
+                    span () { "SQL" }
+                    UiHtml.textareaInputWithAttrs "RawSql" rawSql 10 [ "data-template-input", "true" ]
+                    small () { "Use @InputName, @\"Input Name\", and {{ expression }} templates. Define named SQL parameters below when your query uses @param placeholders." }
+                }
+
+                div (class' = "form-section") {
+                    h3 () { "SQL parameters" }
+                    p (class' = "muted") { "Optional named parameter values for raw SQL. Values support templates." }
+                    kvRows "RawSqlParam" rawSqlParams
+                }
+            }
+        }
+
     let private resourceKindValue (kind: ResourceKind) =
         match kind with
         | ResourceKind.Sql -> "sql"
@@ -482,7 +706,7 @@ module Views =
         let headers = app |> Option.map (fun value -> value.Headers |> List.map keyValuePairDto) |> Option.defaultValue []
         let body = app |> Option.map (fun value -> value.Body |> List.map keyValuePairDto) |> Option.defaultValue []
         let useDynamicJsonBody = app |> Option.map (fun value -> value.UseDynamicJsonBody) |> Option.defaultValue false
-        let rawSql = app |> Option.bind (fun value -> value.SqlConfig) |> Option.bind (fun config -> config.RawSql) |> Option.defaultValue "select 1"
+        let sqlConfig = app |> Option.bind (fun value -> value.SqlConfig)
 
         div (class' = "app-builder-fields") {
             section (class' = "form-section") {
@@ -554,11 +778,7 @@ module Views =
                 | Some selectedResource when selectedResource.ResourceKind = ResourceKind.Sql -> sqlResourcePreview selectedResource
                 | _ -> ()
 
-                label (class' = "field") {
-                    span () { "Raw SQL" }
-                    UiHtml.textareaInputWithAttrs "RawSql" rawSql 10 [ "data-template-input", "true" ]
-                    small () { templateHelpText }
-                }
+                sqlQueryConfigFields sqlConfig
             }
         }
 

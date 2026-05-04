@@ -66,6 +66,108 @@ module Handlers =
             else
                 Some { Key = key; Value = value })
 
+    let private parseOptionalInt (fieldLabel: string) (value: string option) : Result<int option, DomainError> =
+        match value with
+        | None -> Ok None
+        | Some text ->
+            match Int32.TryParse text with
+            | true, parsed -> Ok(Some parsed)
+            | _ -> Error(ValidationError $"{fieldLabel} must be a number")
+
+    let private sqlQueryConfigFromForm (form: IFormCollection) : Result<SqlQueryConfigDto option, DomainError> =
+        let mode = optionalFormValue form "SqlMode" |> Option.defaultValue "gui"
+        let normalizedMode = mode.Trim().ToLowerInvariant()
+
+        match normalizedMode with
+        | "raw" ->
+            Ok(
+                Some {
+                    Mode = "raw"
+                    Table = None
+                    Columns = []
+                    Filters = []
+                    Limit = None
+                    OrderBy = []
+                    RawSql = optionalFormValue form "RawSql" |> Option.orElse (Some "select 1")
+                    RawSqlParams = keyValuePairs form "RawSqlParam"
+                }
+            )
+        | "gui" ->
+            match parseOptionalInt "SQL limit" (optionalFormValue form "SqlLimit") with
+            | Error error -> Error error
+            | Ok limit ->
+                let columns = formValues form "SqlColumn" |> List.distinct
+                let filterColumns = formValuesRaw form "SqlFilterColumn"
+                let filterOperators = formValuesRaw form "SqlFilterOperator"
+                let filterValues = formValuesRaw form "SqlFilterValue"
+
+                let filterRowCount =
+                    [ filterColumns.Length; filterOperators.Length; filterValues.Length ]
+                    |> List.max
+
+                let filters: SqlFilterDto list =
+                    [ 0 .. filterRowCount - 1 ]
+                    |> List.choose (fun index ->
+                        let column = valueAt filterColumns index
+
+                        if String.IsNullOrWhiteSpace column then
+                            None
+                        else
+                            let op = optionalText (valueAt filterOperators index) |> Option.defaultValue "="
+
+                            let value =
+                                if
+                                    op.Equals("IS NULL", StringComparison.OrdinalIgnoreCase)
+                                    || op.Equals("IS NOT NULL", StringComparison.OrdinalIgnoreCase)
+                                then
+                                    None
+                                else
+                                    optionalText (valueAt filterValues index)
+
+                            Some(
+                                {
+                                    Column = column
+                                    Operator = op
+                                    Value = value
+                                }
+                                : SqlFilterDto
+                            ))
+
+                let orderColumns = formValuesRaw form "SqlOrderByColumn"
+                let orderDirections = formValuesRaw form "SqlOrderByDirection"
+                let orderRowCount = max orderColumns.Length orderDirections.Length
+
+                let orderBy: SqlOrderByDto list =
+                    [ 0 .. orderRowCount - 1 ]
+                    |> List.choose (fun index ->
+                        let column = valueAt orderColumns index
+
+                        if String.IsNullOrWhiteSpace column then
+                            None
+                        else
+                            Some(
+                                {
+                                    Column = column
+                                    Direction =
+                                        optionalText (valueAt orderDirections index) |> Option.defaultValue "ASC"
+                                }
+                                : SqlOrderByDto
+                            ))
+
+                Ok(
+                    Some {
+                        Mode = "gui"
+                        Table = optionalFormValue form "SqlTable"
+                        Columns = columns
+                        Filters = filters
+                        Limit = limit
+                        OrderBy = orderBy
+                        RawSql = None
+                        RawSqlParams = []
+                    }
+                )
+        | _ -> Error(ValidationError $"Invalid SQL query mode: {mode}")
+
     let private sequenceResults (results: Result<'T, DomainError> list) : Result<'T list, DomainError> =
         let folder acc item =
             match acc, item with
@@ -1961,30 +2063,22 @@ module Handlers =
                         let useDynamicJsonBody =
                             formValues posted "UseDynamicJsonBody" |> List.contains "true"
 
-                        let sqlConfig: SqlQueryConfigDto option =
+                        let sqlConfigResult =
                             if resource.State.ResourceKind = ResourceKind.Sql then
-                                Some {
-                                    Mode = "raw"
-                                    Table = None
-                                    Columns = []
-                                    Filters = []
-                                    Limit = None
-                                    OrderBy = []
-                                    RawSql = optionalFormValue posted "RawSql" |> Option.orElse (Some "select 1")
-                                    RawSqlParams = []
-                                }
+                                sqlQueryConfigFromForm posted
                             else
-                                None
+                                Ok None
 
-                        match submittedInputs with
-                        | Error error ->
+                        match submittedInputs, sqlConfigResult with
+                        | Error error, _
+                        | _, Error error ->
                             return!
                                 redirectWithFlash
                                     ctx
                                     $"/spaces/{spaceId}/{folderId}"
                                     "error"
                                     (UiFormat.domainError error)
-                        | Ok inputs ->
+                        | Ok inputs, Ok sqlConfig ->
                             let dto: CreateAppDto = {
                                 Name = formValue posted "Name"
                                 FolderId = folderId
@@ -2283,36 +2377,15 @@ module Handlers =
                                                 bodyResult
                                             ]
                                         | ResourceKind.Sql ->
-                                            let currentRawSql =
-                                                currentApp.State.SqlConfig
-                                                |> Option.bind (fun config -> config.RawSql)
-                                                |> Option.defaultValue "select 1"
-
-                                            let rawSql =
-                                                optionalFormValue posted "RawSql" |> Option.defaultValue currentRawSql
-
-                                            let! sqlResult =
-                                                handleWithResource (
-                                                    UpdateAppSqlConfig(
-                                                        actor,
-                                                        appId,
-                                                        {
-                                                            SqlConfig =
-                                                                Some {
-                                                                    Mode = "raw"
-                                                                    Table = None
-                                                                    Columns = []
-                                                                    Filters = []
-                                                                    Limit = None
-                                                                    OrderBy = []
-                                                                    RawSql = Some rawSql
-                                                                    RawSqlParams = []
-                                                                }
-                                                        }
+                                            match sqlQueryConfigFromForm posted with
+                                            | Error error -> return [ inputsResult; methodResult; Error error ]
+                                            | Ok sqlConfig ->
+                                                let! sqlResult =
+                                                    handleWithResource (
+                                                        UpdateAppSqlConfig(actor, appId, { SqlConfig = sqlConfig })
                                                     )
-                                                )
 
-                                            return [ inputsResult; methodResult; sqlResult ]
+                                                return [ inputsResult; methodResult; sqlResult ]
                                     }
 
                                     let firstError =
