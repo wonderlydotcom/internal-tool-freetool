@@ -269,49 +269,95 @@ module Views =
         tag { labelText }
 
     let private inputRows (inputs: Input list) =
-        let row (input: Input option) (template: bool) =
-            let title = input |> Option.map (fun value -> value.Title) |> Option.defaultValue String.Empty
-            let description = input |> Option.bind (fun value -> value.Description) |> Option.defaultValue String.Empty
-            let selectedType = input |> Option.map (fun value -> inputTypeFormValue value.Type) |> Option.defaultValue "text"
-            let requiredValue = input |> Option.map (fun value -> if value.Required then "true" else "false") |> Option.defaultValue "false"
-            let defaultValue = input |> Option.map UiFormat.defaultValue |> Option.defaultValue String.Empty
-            let typeConfig = input |> Option.map (fun value -> inputTypeConfigValue value.Type) |> Option.defaultValue String.Empty
+        let row (appInput: Input option) (template: bool) =
+            let title = appInput |> Option.map (fun value -> value.Title) |> Option.defaultValue String.Empty
+            let description = appInput |> Option.bind (fun value -> value.Description) |> Option.defaultValue String.Empty
+            let selectedType = appInput |> Option.map (fun value -> inputTypeFormValue value.Type) |> Option.defaultValue "text"
+            let requiredValue = appInput |> Option.map (fun value -> if value.Required then "true" else "false") |> Option.defaultValue "false"
+            let defaultValue = appInput |> Option.map UiFormat.defaultValue |> Option.defaultValue String.Empty
+            let typeConfig = appInput |> Option.map (fun value -> inputTypeConfigValue value.Type) |> Option.defaultValue String.Empty
             let rowClass = if template then "input-row input-row-template" else "input-row"
+            let isBoolean = selectedType = "boolean"
+            let isRequired = isBoolean || requiredValue = "true"
+            let requiredFormValue = if isRequired then "true" else "false"
 
             div (class' = rowClass) {
-                UiHtml.textInput "InputTitle" title false "Input title"
-                UiHtml.textInput "InputDescription" description false "Description"
-
-                let typeSelect = UiHtml.attrs [ "name", "InputType"; "aria-label", "Input type" ] (select ())
-
-                typeSelect {
-                    inputTypeOption selectedType "text" "Text"
-                    inputTypeOption selectedType "email" "Email"
-                    inputTypeOption selectedType "date" "Date"
-                    inputTypeOption selectedType "integer" "Integer"
-                    inputTypeOption selectedType "boolean" "Boolean"
-                    inputTypeOption selectedType "currency" "Currency (USD)"
-                    inputTypeOption selectedType "radio" "Radio"
-                    inputTypeOption selectedType "multi-email" "Email choices"
-                    inputTypeOption selectedType "multi-date" "Date choices"
-                    inputTypeOption selectedType "multi-text" "Text choices"
-                    inputTypeOption selectedType "multi-integer" "Integer choices"
+                div (class' = "input-row-field input-row-title") {
+                    UiHtml.textInput "InputTitle" title false "Field label"
                 }
 
-                let requiredSelect = UiHtml.attrs [ "name", "InputRequired"; "aria-label", "Required" ] (select ())
+                div (class' = "input-row-field input-row-type") {
+                    let typeSelect =
+                        UiHtml.attrs [ "name", "InputType"; "aria-label", "Input type"; "data-input-type-select", "true" ] (select ())
 
-                requiredSelect {
-                    UiHtml.optionTag "false" "Optional" (requiredValue = "false")
-                    UiHtml.optionTag "true" "Required" (requiredValue = "true")
+                    typeSelect {
+                        inputTypeOption selectedType "text" "Text"
+                        inputTypeOption selectedType "email" "Email"
+                        inputTypeOption selectedType "date" "Date"
+                        inputTypeOption selectedType "integer" "Integer"
+                        inputTypeOption selectedType "boolean" "Boolean"
+                        inputTypeOption selectedType "currency" "Currency (USD)"
+                        inputTypeOption selectedType "radio" "Radio"
+                        inputTypeOption selectedType "multi-email" "Email choices"
+                        inputTypeOption selectedType "multi-date" "Date choices"
+                        inputTypeOption selectedType "multi-text" "Text choices"
+                        inputTypeOption selectedType "multi-integer" "Integer choices"
+                    }
                 }
 
-                UiHtml.textInput "InputDefaultValue" defaultValue false "Default value"
-                UiHtml.textInput "InputTypeConfig" typeConfig false "Max length or comma options"
+                div (class' = "input-row-field input-row-required") {
+                    let requiredHidden =
+                        UiHtml.attrs [ "type", "hidden"; "name", "InputRequired"; "value", requiredFormValue; "data-input-required-value", "true" ] (input ())
 
-                let removeButton =
-                    UiHtml.attrs [ "type", "button"; "class", "button button-ghost"; "data-remove-row", "true" ] (button ())
+                    requiredHidden
 
-                removeButton { "Remove" }
+                    label (class' = "input-required-switch") {
+                        let requiredToggle =
+                            UiHtml.attrs
+                                ([ "type", "checkbox"; "value", "true"; "aria-label", "Required"; "data-input-required-toggle", "true" ]
+                                 @ UiHtml.checkedAttr isRequired
+                                 @ UiHtml.disabledAttr isBoolean)
+                                (input ())
+
+                        requiredToggle
+                        span (class' = "input-switch-track") { span (class' = "input-switch-thumb") { } }
+
+                        let requiredLabel =
+                            UiHtml.attrs [ "class", "input-required-label"; "data-input-required-label", "true" ] (span ())
+
+                        requiredLabel {
+                            if isBoolean then
+                                "Required (boolean)"
+                            else
+                                "Required"
+                        }
+                    }
+                }
+
+                div (class' = "input-row-field input-row-remove") {
+                    let removeButton =
+                        UiHtml.attrs
+                            [ "type", "button"; "class", "button button-ghost input-row-remove-button"; "data-remove-row", "true" ]
+                            (button ())
+
+                    removeButton { "Remove" }
+                }
+
+                div (class' = "input-row-field input-row-description") {
+                    UiHtml.textInput "InputDescription" description false "Description (optional)"
+                }
+
+                let defaultShellAttrs =
+                    [ "class", "input-row-field input-row-default"; "data-input-default-shell", "true" ]
+                    @ UiHtml.whenAttr isRequired "hidden" "hidden"
+
+                let defaultShell = UiHtml.attrs defaultShellAttrs (div ())
+
+                defaultShell { UiHtml.textInput "InputDefaultValue" defaultValue false "Default value (optional)" }
+
+                div (class' = "input-row-field input-row-config") {
+                    UiHtml.textInput "InputTypeConfig" typeConfig false "Max length or comma options"
+                }
             }
 
         let container = UiHtml.attrs [ "class", "input-rows"; "data-input-rows", "true" ] (div ())
@@ -323,7 +369,7 @@ module Views =
             row None true
 
             let addButton =
-                UiHtml.attrs [ "type", "button"; "class", "button button-secondary"; "data-add-input-row", "true" ] (button ())
+                UiHtml.attrs [ "type", "button"; "class", "button button-secondary input-add-button"; "data-add-input-row", "true" ] (button ())
 
             addButton { "Add input" }
         }

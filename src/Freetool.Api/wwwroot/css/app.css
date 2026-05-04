@@ -112,7 +112,27 @@ textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, m
 .inline-form { display: flex; align-items: center; gap: .5rem; }
 .kv-rows, .input-rows { display: grid; gap: .5rem; margin-bottom: 1rem; }
 .kv-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: .5rem; }
-.input-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: .5rem; align-items: start; }
+.input-row { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: .55rem; align-items: center; padding: .7rem; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-muted); }
+.input-row-field { min-width: 0; }
+.input-row-title { grid-column: span 4; }
+.input-row-type { grid-column: span 3; }
+.input-row-required { grid-column: span 3; }
+.input-row-remove { grid-column: span 2; justify-self: end; }
+.input-row-description { grid-column: span 6; }
+.input-row-default { grid-column: span 3; }
+.input-row-config { grid-column: span 3; }
+.input-row input, .input-row select { padding: .55rem .65rem; }
+.input-add-button { justify-self: start; }
+.input-row-remove-button { padding-inline: .75rem; }
+.input-required-switch { position: relative; display: inline-flex; align-items: center; gap: .5rem; min-height: 2.3rem; color: var(--muted); font-size: .9rem; font-weight: 650; cursor: pointer; user-select: none; }
+.input-required-switch input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+.input-switch-track { display: inline-flex; align-items: center; width: 2.35rem; height: 1.25rem; padding: .15rem; border-radius: 999px; background: #cbd5e1; transition: background .15s ease; }
+.input-switch-thumb { display: block; width: .95rem; height: .95rem; border-radius: 999px; background: white; box-shadow: 0 1px 3px rgba(15, 23, 42, .24); transition: transform .15s ease; }
+.input-required-switch input:checked + .input-switch-track { background: var(--primary); }
+.input-required-switch input:checked + .input-switch-track .input-switch-thumb { transform: translateX(1.1rem); }
+.input-required-switch input:focus-visible + .input-switch-track { outline: 2px solid var(--primary); outline-offset: 2px; }
+.input-required-switch input:disabled + .input-switch-track { opacity: .65; }
+.input-required-switch input:disabled ~ .input-required-label { opacity: .75; }
 .kv-row-template, .input-row-template { display: none; }
 .button { display: inline-flex; align-items: center; justify-content: center; gap: .35rem; border: 0; border-radius: 10px; padding: .65rem .9rem; background: var(--primary); color: var(--primary-contrast); font-weight: 700; cursor: pointer; }
 .button:hover { filter: brightness(.96); }
@@ -200,4 +220,7 @@ th { color: var(--muted); font-size: .85rem; }
   .grid-two, .form-grid { grid-template-columns: 1fr; }
   .card-header-actions { flex-direction: column; }
   .kv-row, .input-row { grid-template-columns: 1fr; }
+  .input-row-title, .input-row-type, .input-row-required, .input-row-remove, .input-row-description, .input-row-default, .input-row-config { grid-column: 1; }
+  .input-row-remove { justify-self: stretch; }
+  .input-row-remove-button { width: 100%; }
 }
