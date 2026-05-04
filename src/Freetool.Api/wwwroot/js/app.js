@@ -125,10 +125,10 @@
         const title = titleInput.value.trim();
         if (!title || seen.has(title)) return;
 
-        const requiredSelect = row.querySelector('select[name="InputRequired"]');
+        const requiredInput = row.querySelector("[data-input-required-value]");
         const required =
-          requiredSelect instanceof HTMLSelectElement &&
-          requiredSelect.value === "true";
+          requiredInput instanceof HTMLInputElement &&
+          requiredInput.value === "true";
 
         seen.add(title);
         suggestions.push({
@@ -699,10 +699,48 @@
     });
   }
 
+  function syncInputRowState(row) {
+    const typeSelect = row.querySelector("[data-input-type-select]");
+    const requiredToggle = row.querySelector("[data-input-required-toggle]");
+    const requiredValue = row.querySelector("[data-input-required-value]");
+    const requiredLabel = row.querySelector("[data-input-required-label]");
+    const defaultShell = row.querySelector("[data-input-default-shell]");
+    const defaultInput = row.querySelector('input[name="InputDefaultValue"]');
+
+    if (!(typeSelect instanceof HTMLSelectElement)) return;
+    if (!(requiredToggle instanceof HTMLInputElement)) return;
+    if (!(requiredValue instanceof HTMLInputElement)) return;
+
+    const isBoolean = typeSelect.value === "boolean";
+    if (isBoolean) requiredToggle.checked = true;
+    requiredToggle.disabled = isBoolean;
+
+    const isRequired = isBoolean || requiredToggle.checked;
+    requiredValue.value = isRequired ? "true" : "false";
+
+    if (requiredLabel) {
+      requiredLabel.textContent = isBoolean ? "Required (boolean)" : "Required";
+    }
+
+    if (defaultShell instanceof HTMLElement) defaultShell.hidden = isRequired;
+    if (isRequired && defaultInput instanceof HTMLInputElement) defaultInput.value = "";
+  }
+
+  function initializeInputRows(root = document) {
+    const rows = [];
+    if (root instanceof Element && root.matches(".input-row")) rows.push(root);
+    root.querySelectorAll?.(".input-row").forEach((row) => rows.push(row));
+
+    rows.forEach((row) => {
+      if (!row.classList.contains("input-row-template")) syncInputRowState(row);
+    });
+  }
+
   function initializeAppConfigForms() {
     document.querySelectorAll("[data-app-config-form]").forEach((form) => {
       updateAppResourceSections(form);
       updateDynamicBodySections(form);
+      initializeInputRows(form);
     });
   }
 
@@ -821,6 +859,18 @@
     if (dynamicBodyCheckbox) {
       const form = dynamicBodyCheckbox.closest("[data-app-config-form]");
       if (form) updateDynamicBodySections(form);
+      return;
+    }
+
+    const inputRowControl = closest(
+      event.target,
+      "[data-input-type-select], [data-input-required-toggle]"
+    );
+    if (inputRowControl) {
+      const row = inputRowControl.closest(".input-row");
+      if (row && !row.classList.contains("input-row-template")) {
+        syncInputRowState(row);
+      }
     }
   });
 
@@ -876,6 +926,7 @@
         resetFormControls(clone);
         container.insertBefore(clone, addInputButton);
         initializeTemplateInputs(clone);
+        initializeInputRows(clone);
       }
       return;
     }
@@ -934,7 +985,10 @@
   const templateInputObserver = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
       mutation.addedNodes.forEach((node) => {
-        if (node instanceof Element) initializeTemplateInputs(node);
+        if (node instanceof Element) {
+          initializeTemplateInputs(node);
+          initializeInputRows(node);
+        }
       });
     });
   });
