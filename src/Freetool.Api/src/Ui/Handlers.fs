@@ -36,6 +36,44 @@ module Handlers =
     let private queryPage ctx =
         queryValue ctx "page" |> parsePositiveInt 1
 
+    let private queryOption ctx key = queryValue ctx key |> optionalText
+
+    let private parseDateQuery
+        (label: string)
+        (endOfDay: bool)
+        (value: string option)
+        : Result<DateTime option, string> =
+        match value with
+        | None -> Ok None
+        | Some text ->
+            match DateTime.TryParse text with
+            | true, parsed ->
+                let date =
+                    if endOfDay then
+                        parsed.Date.AddDays(1.0).AddTicks(-1L)
+                    else
+                        parsed.Date
+
+                Ok(Some date)
+            | _ -> Error $"{label} must be a valid date."
+
+    let private buildQueryHref (path: string) (pairs: (string * string option) list) =
+        let query =
+            pairs
+            |> List.choose (fun (key, value) ->
+                value
+                |> Option.bind (fun text ->
+                    if String.IsNullOrWhiteSpace text then
+                        None
+                    else
+                        Some $"{Uri.EscapeDataString key}={Uri.EscapeDataString text}"))
+            |> String.concat "&"
+
+        if String.IsNullOrWhiteSpace query then
+            path
+        else
+            $"{path}?{query}"
+
     let private form (ctx: HttpContext) = ctx.Request.ReadFormAsync()
     let private formValue (form: IFormCollection) key = form[key].ToString() |> normalize
     let private optionalFormValue form key = formValue form key |> optionalText
@@ -907,152 +945,307 @@ module Handlers =
         fun ctx -> task {
             let page = queryPage ctx
             let skip = (page - 1) * UiModels.PageSize
-            let scope = queryValue ctx "scope" |> optionalText
+            let scope = queryOption ctx "scope"
             let appId = queryValue ctx "appId"
             let userId = queryValue ctx "userId"
             let dashboardId = queryValue ctx "dashboardId"
+            let search = queryOption ctx "q"
+            let actorUserId = queryOption ctx "actorUserId"
+            let eventType = queryOption ctx "eventType"
+            let entityType = queryOption ctx "entityType"
+            let fromDateText = queryOption ctx "fromDate"
+            let toDateText = queryOption ctx "toDate"
 
-            let! eventsResult = task {
-                match scope with
-                | Some "app" ->
-                    match Guid.TryParse appId with
-                    | true, guid ->
-                        let! result =
-                            events ctx
-                            |> fun repo ->
-                                repo.GetEventsByAppIdAsync(
-                                    {
-                                        AppId = AppId.FromGuid guid
-                                        FromDate = None
-                                        ToDate = None
-                                        Skip = skip
-                                        Take = UiModels.PageSize
-                                        IncludeRunEvents = true
-                                    }
-                                )
+            let includeRunEvents =
+                queryOption ctx "includeRunEvents"
+                |> Option.map (parseBool true)
+                |> Option.defaultValue true
 
-                        return Ok result
-                    | _ -> return Error "Invalid or missing appId query parameter."
-                | Some "user" ->
-                    match Guid.TryParse userId with
-                    | true, guid ->
-                        let! result =
-                            events ctx
-                            |> fun repo ->
-                                repo.GetEventsByUserIdAsync(
-                                    {
-                                        UserId = UserId.FromGuid guid
-                                        FromDate = None
-                                        ToDate = None
-                                        Skip = skip
-                                        Take = UiModels.PageSize
-                                    }
-                                )
+            let parseActorUserId =
+                match actorUserId with
+                | None -> Ok None
+                | Some value ->
+                    match Guid.TryParse value with
+                    | true, guid -> Ok(Some(UserId.FromGuid guid))
+                    | _ -> Error "Actor user must be a valid user id."
 
-                        return Ok result
-                    | _ -> return Error "Invalid or missing userId query parameter."
-                | Some "dashboard" ->
-                    match Guid.TryParse dashboardId with
-                    | true, guid ->
-                        let! result =
-                            events ctx
-                            |> fun repo ->
-                                repo.GetEventsByDashboardIdAsync(
-                                    {
-                                        DashboardId = DashboardId.FromGuid guid
-                                        FromDate = None
-                                        ToDate = None
-                                        Skip = skip
-                                        Take = UiModels.PageSize
-                                    }
-                                )
+            let parseEventType =
+                match eventType with
+                | None -> Ok None
+                | Some value ->
+                    match EventTypeConverter.fromString value with
+                    | Some parsed -> Ok(Some parsed)
+                    | None -> Error $"Unsupported event type: {value}."
 
-                        return Ok result
-                    | _ -> return Error "Invalid or missing dashboardId query parameter."
-                | Some other -> return Error $"Unsupported audit scope: {other}."
-                | None ->
-                    let! result =
-                        events ctx
-                        |> fun repo ->
-                            repo.GetEventsAsync(
-                                {
-                                    UserId = None
-                                    EventType = None
-                                    EntityType = None
-                                    FromDate = None
-                                    ToDate = None
-                                    Skip = skip
-                                    Take = UiModels.PageSize
-                                }
-                            )
+            let parseEntityType =
+                match entityType with
+                | None -> Ok None
+                | Some value ->
+                    match EntityTypeConverter.fromString value with
+                    | Some parsed -> Ok(Some parsed)
+                    | None -> Error $"Unsupported entity type: {value}."
 
-                    return Ok result
-            }
+            let fromDateResult = parseDateQuery "From date" false fromDateText
+            let toDateResult = parseDateQuery "To date" true toDateText
 
-            match eventsResult with
-            | Error message -> return! writeStatus ctx StatusCodes.Status400BadRequest "Invalid audit query" message
-            | Ok result ->
-                let enhancementTasks =
-                    result.Items
-                    |> List.map (fun event -> (eventEnhancement ctx).EnhanceEventAsync event)
-                    |> List.toArray
+            match parseActorUserId, parseEventType, parseEntityType, fromDateResult, toDateResult with
+            | Error message, _, _, _, _
+            | _, Error message, _, _, _
+            | _, _, Error message, _, _
+            | _, _, _, Error message, _
+            | _, _, _, _, Error message ->
+                return! writeStatus ctx StatusCodes.Status400BadRequest "Invalid audit query" message
+            | Ok actorUserIdFilter, Ok eventTypeFilter, Ok entityTypeFilter, Ok fromDate, Ok toDate ->
+                match fromDate, toDate with
+                | Some fromDateValue, Some toDateValue when fromDateValue > toDateValue ->
+                    return!
+                        writeStatus
+                            ctx
+                            StatusCodes.Status400BadRequest
+                            "Invalid audit query"
+                            "From date must be on or before to date."
+                | _ ->
+                    let needsInMemoryFiltering =
+                        search.IsSome
+                        || (scope.IsSome
+                            && (actorUserIdFilter.IsSome || eventTypeFilter.IsSome || entityTypeFilter.IsSome))
 
-                let! enhancedEvents = Task.WhenAll enhancementTasks
+                    let querySkip = if needsInMemoryFiltering then 0 else skip
 
-                let! scopeText = task {
-                    match scope with
-                    | Some "user" ->
-                        match Guid.TryParse userId with
-                        | true, guid ->
-                            let userId = UserId.FromGuid guid
-                            let! user = (users ctx).GetByIdAsync userId
+                    let queryTake =
+                        if needsInMemoryFiltering then
+                            Int32.MaxValue
+                        else
+                            UiModels.PageSize
 
-                            return
-                                user
-                                |> Option.map (fun user ->
-                                    $"Showing audit events for {user.State.Name} ({user.State.Email}).")
-                                |> Option.orElse (Some $"Showing audit events for user {userId.Value}.")
-                        | _ -> return Some "Showing audit events for the selected user."
-                    | Some "app" ->
-                        match Guid.TryParse appId with
-                        | true, guid ->
-                            let appId = AppId.FromGuid guid
-                            let! app = (apps ctx).GetByIdAsync appId
+                    let! eventsResult = task {
+                        match scope with
+                        | Some "app" ->
+                            match Guid.TryParse appId with
+                            | true, guid ->
+                                let! result =
+                                    events ctx
+                                    |> fun repo ->
+                                        repo.GetEventsByAppIdAsync(
+                                            {
+                                                AppId = AppId.FromGuid guid
+                                                FromDate = fromDate
+                                                ToDate = toDate
+                                                Skip = querySkip
+                                                Take = queryTake
+                                                IncludeRunEvents = includeRunEvents
+                                            }
+                                        )
 
-                            return
-                                app
-                                |> Option.map (fun app -> $"Showing audit events for app {app.State.Name}.")
-                                |> Option.orElse (Some $"Showing audit events for app {appId.Value}.")
-                        | _ -> return Some "Showing audit events for the selected app."
-                    | Some "dashboard" ->
-                        match Guid.TryParse dashboardId with
-                        | true, guid ->
-                            let dashboardId = DashboardId.FromGuid guid
-                            let! dashboard = (dashboards ctx).GetByIdAsync dashboardId
+                                return Ok result
+                            | _ -> return Error "Invalid or missing appId query parameter."
+                        | Some "user" ->
+                            match Guid.TryParse userId with
+                            | true, guid ->
+                                let! result =
+                                    events ctx
+                                    |> fun repo ->
+                                        repo.GetEventsByUserIdAsync(
+                                            {
+                                                UserId = UserId.FromGuid guid
+                                                FromDate = fromDate
+                                                ToDate = toDate
+                                                Skip = querySkip
+                                                Take = queryTake
+                                            }
+                                        )
 
-                            return
-                                dashboard
-                                |> Option.map (fun dashboard ->
-                                    $"Showing audit events for dashboard {dashboard.State.Name.Value}.")
-                                |> Option.orElse (Some $"Showing audit events for dashboard {dashboardId.Value}.")
-                        | _ -> return Some "Showing audit events for the selected dashboard."
-                    | Some other -> return Some $"Showing audit events for scope {other}."
-                    | None -> return None
-                }
+                                return Ok result
+                            | _ -> return Error "Invalid or missing userId query parameter."
+                        | Some "dashboard" ->
+                            match Guid.TryParse dashboardId with
+                            | true, guid ->
+                                let! result =
+                                    events ctx
+                                    |> fun repo ->
+                                        repo.GetEventsByDashboardIdAsync(
+                                            {
+                                                DashboardId = DashboardId.FromGuid guid
+                                                FromDate = fromDate
+                                                ToDate = toDate
+                                                Skip = querySkip
+                                                Take = queryTake
+                                            }
+                                        )
 
-                let baseHref =
-                    match scope with
-                    | Some "user" -> $"/audit?scope=user&userId={Uri.EscapeDataString userId}"
-                    | Some "app" -> $"/audit?scope=app&appId={Uri.EscapeDataString appId}"
-                    | Some "dashboard" -> $"/audit?scope=dashboard&dashboardId={Uri.EscapeDataString dashboardId}"
-                    | _ -> "/audit"
+                                return Ok result
+                            | _ -> return Error "Invalid or missing dashboardId query parameter."
+                        | Some other -> return Error $"Unsupported audit scope: {other}."
+                        | None ->
+                            let! result =
+                                events ctx
+                                |> fun repo ->
+                                    repo.GetEventsAsync(
+                                        {
+                                            UserId = actorUserIdFilter
+                                            EventType = eventTypeFilter
+                                            EntityType = entityTypeFilter
+                                            FromDate = fromDate
+                                            ToDate = toDate
+                                            Skip = querySkip
+                                            Take = queryTake
+                                        }
+                                    )
 
-                return!
-                    writePage
-                        ctx
-                        "audit"
-                        "Audit"
-                        (Views.auditPage (enhancedEvents |> Array.toList) page result.TotalCount scopeText baseHref)
+                            return Ok result
+                    }
+
+                    match eventsResult with
+                    | Error message ->
+                        return! writeStatus ctx StatusCodes.Status400BadRequest "Invalid audit query" message
+                    | Ok result ->
+                        let rawMatches (event: EventData) =
+                            let actorMatches =
+                                match actorUserIdFilter with
+                                | Some userId -> event.UserId = userId
+                                | None -> true
+
+                            let eventTypeMatches =
+                                match eventTypeFilter with
+                                | Some selected -> event.EventType = selected
+                                | None -> true
+
+                            let entityTypeMatches =
+                                match entityTypeFilter with
+                                | Some selected -> event.EntityType = selected
+                                | None -> true
+
+                            actorMatches && eventTypeMatches && entityTypeMatches
+
+                        let rawEvents =
+                            if needsInMemoryFiltering then
+                                result.Items |> List.filter rawMatches
+                            else
+                                result.Items
+
+                        let enhancementTasks =
+                            rawEvents
+                            |> List.map (fun event -> (eventEnhancement ctx).EnhanceEventAsync event)
+                            |> List.toArray
+
+                        let! enhancedEvents = Task.WhenAll enhancementTasks
+
+                        let containsText (needle: string) (value: string) =
+                            not (String.IsNullOrWhiteSpace value)
+                            && value.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0
+
+                        let matchesSearch (event: EnhancedEventData) =
+                            match search with
+                            | None -> true
+                            | Some query ->
+                                [
+                                    event.EventSummary
+                                    event.EntityName
+                                    event.EntityId
+                                    event.EventId
+                                    event.UserName
+                                    event.UserId.Value.ToString()
+                                    UiFormat.eventType event.EventType
+                                    UiFormat.entityType event.EntityType
+                                    event.EventData
+                                ]
+                                |> List.exists (containsText query)
+
+                        let filteredEvents = enhancedEvents |> Array.toList |> List.filter matchesSearch
+
+                        let visibleEvents, totalCount =
+                            if needsInMemoryFiltering then
+                                filteredEvents |> List.skip skip |> List.truncate UiModels.PageSize,
+                                filteredEvents.Length
+                            else
+                                filteredEvents, result.TotalCount
+
+                        let! scopeText = task {
+                            match scope with
+                            | Some "user" ->
+                                match Guid.TryParse userId with
+                                | true, guid ->
+                                    let userId = UserId.FromGuid guid
+                                    let! user = (users ctx).GetByIdAsync userId
+
+                                    return
+                                        user
+                                        |> Option.map (fun user ->
+                                            $"Showing audit events for {user.State.Name} ({user.State.Email}).")
+                                        |> Option.orElse (Some $"Showing audit events for user {userId.Value}.")
+                                | _ -> return Some "Showing audit events for the selected user."
+                            | Some "app" ->
+                                match Guid.TryParse appId with
+                                | true, guid ->
+                                    let appId = AppId.FromGuid guid
+                                    let! app = (apps ctx).GetByIdAsync appId
+
+                                    return
+                                        app
+                                        |> Option.map (fun app -> $"Showing audit events for app {app.State.Name}.")
+                                        |> Option.orElse (Some $"Showing audit events for app {appId.Value}.")
+                                | _ -> return Some "Showing audit events for the selected app."
+                            | Some "dashboard" ->
+                                match Guid.TryParse dashboardId with
+                                | true, guid ->
+                                    let dashboardId = DashboardId.FromGuid guid
+                                    let! dashboard = (dashboards ctx).GetByIdAsync dashboardId
+
+                                    return
+                                        dashboard
+                                        |> Option.map (fun dashboard ->
+                                            $"Showing audit events for dashboard {dashboard.State.Name.Value}.")
+                                        |> Option.orElse (
+                                            Some $"Showing audit events for dashboard {dashboardId.Value}."
+                                        )
+                                | _ -> return Some "Showing audit events for the selected dashboard."
+                            | Some other -> return Some $"Showing audit events for scope {other}."
+                            | None -> return None
+                        }
+
+                        let includeRunEventsParam =
+                            if scope = Some "app" && not includeRunEvents then
+                                Some "false"
+                            else
+                                None
+
+                        let baseHref =
+                            buildQueryHref "/audit" [
+                                "scope", scope
+                                "appId", optionalText appId
+                                "userId", optionalText userId
+                                "dashboardId", optionalText dashboardId
+                                "q", search
+                                "actorUserId", actorUserId
+                                "eventType", eventType
+                                "entityType", entityType
+                                "fromDate", fromDateText
+                                "toDate", toDateText
+                                "includeRunEvents", includeRunEventsParam
+                            ]
+
+                        let filterValues: Views.AuditFilterValues = {
+                            Scope = scope
+                            AppId = optionalText appId
+                            UserId = optionalText userId
+                            DashboardId = optionalText dashboardId
+                            Search = search
+                            ActorUserId = actorUserId
+                            EventType = eventType
+                            EntityType = entityType
+                            FromDate = fromDateText
+                            ToDate = toDateText
+                            IncludeRunEvents = includeRunEvents
+                        }
+
+                        let! userList = allUsers ctx
+
+                        return!
+                            writePage
+                                ctx
+                                "audit"
+                                "Audit"
+                                (Views.auditPage userList visibleEvents page totalCount scopeText baseHref filterValues)
         }
 
     let trashPage (spaceId: string) : EndpointHandler =

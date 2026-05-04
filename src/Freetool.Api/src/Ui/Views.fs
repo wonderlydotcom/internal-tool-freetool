@@ -9,6 +9,20 @@ open Freetool.Application.DTOs
 open Freetool.Application.Services
 
 module Views =
+    type AuditFilterValues = {
+        Scope: string option
+        AppId: string option
+        UserId: string option
+        DashboardId: string option
+        Search: string option
+        ActorUserId: string option
+        EventType: string option
+        EntityType: string option
+        FromDate: string option
+        ToDate: string option
+        IncludeRunEvents: bool
+    }
+
     let private idOf (id: Guid) = id.ToString()
     let private spaceId (space: SpaceData) = space.Id.Value.ToString()
     let private folderId (folder: FolderData) = folder.Id.Value.ToString()
@@ -2143,7 +2157,149 @@ module Views =
             }
         }
 
-    let auditPage (events: EnhancedEventData list) (page: int) (total: int) (scope: string option) (baseHref: string) =
+    let private auditEventTypes =
+        [ "UserCreatedEvent"
+          "UserUpdatedEvent"
+          "UserDeletedEvent"
+          "UserInvitedEvent"
+          "UserActivatedEvent"
+          "AppCreatedEvent"
+          "AppUpdatedEvent"
+          "AppDeletedEvent"
+          "AppRestoredEvent"
+          "DashboardCreatedEvent"
+          "DashboardUpdatedEvent"
+          "DashboardDeletedEvent"
+          "DashboardPreparedEvent"
+          "DashboardPrepareFailedEvent"
+          "DashboardActionExecutedEvent"
+          "DashboardActionFailedEvent"
+          "ResourceCreatedEvent"
+          "ResourceUpdatedEvent"
+          "ResourceDeletedEvent"
+          "ResourceRestoredEvent"
+          "FolderCreatedEvent"
+          "FolderUpdatedEvent"
+          "FolderDeletedEvent"
+          "FolderRestoredEvent"
+          "RunCreatedEvent"
+          "RunStatusChangedEvent"
+          "SpaceCreatedEvent"
+          "SpaceUpdatedEvent"
+          "SpaceDeletedEvent"
+          "SpacePermissionsChangedEvent"
+          "SpaceDefaultMemberPermissionsChangedEvent" ]
+
+    let private auditEntityTypes = [ "User"; "App"; "Dashboard"; "Resource"; "Folder"; "Run"; "Space" ]
+
+    let private auditScopeTitle (scope: string option) =
+        match scope with
+        | Some "app" -> "App Audit Log"
+        | Some "user" -> "User Audit Log"
+        | Some "dashboard" -> "Dashboard Audit Log"
+        | _ -> "Audit log"
+
+    let private auditQueryHref (pairs: (string * string option) list) =
+        let query =
+            pairs
+            |> List.choose (fun (key, value) ->
+                value
+                |> Option.bind (fun text ->
+                    if String.IsNullOrWhiteSpace text then
+                        None
+                    else
+                        Some $"{Uri.EscapeDataString key}={Uri.EscapeDataString text}"))
+            |> String.concat "&"
+
+        if String.IsNullOrWhiteSpace query then "/audit" else $"/audit?{query}"
+
+    let private auditScopedPairs (filters: AuditFilterValues) =
+        [ "scope", filters.Scope
+          "appId", filters.AppId
+          "userId", filters.UserId
+          "dashboardId", filters.DashboardId ]
+
+    let private auditFilterForm (users: UserData list) (filters: AuditFilterValues) =
+        let selected value optionValue = optionValue |> Option.exists ((=) value)
+        let scopedPairs = auditScopedPairs filters
+        let clearHref = auditQueryHref scopedPairs
+
+        form (method = "get", action = "/audit", class' = "audit-filter-form") {
+            for key, value in scopedPairs do
+                match value with
+                | Some text when not (String.IsNullOrWhiteSpace text) -> UiHtml.hidden key text
+                | _ -> ()
+
+            div (class' = "form-grid") {
+                field
+                    "Search"
+                    (UiHtml.textInput "q" (filters.Search |> Option.defaultValue String.Empty) false "Event, entity, actor, or raw JSON")
+                    (Some "Searches event summary, entity, actor, IDs, and raw event data.")
+
+                if filters.Scope.IsNone then
+                    label (class' = "field") {
+                        span () { "Actor user" }
+                        let selectTag = UiHtml.attrs [ "name", "actorUserId" ] (select ())
+
+                        selectTag {
+                            option (value = "") { "Any actor" }
+                            for user in users do
+                                UiHtml.optionTag (userId user) ($"{displayUserName user} ({user.Email})") (selected (userId user) filters.ActorUserId)
+                        }
+                    }
+
+                label (class' = "field") {
+                    span () { "Event type" }
+                    let selectTag = UiHtml.attrs [ "name", "eventType" ] (select ())
+
+                    selectTag {
+                        option (value = "") { "Any event" }
+                        for eventType in auditEventTypes do
+                            UiHtml.optionTag eventType (eventType.Replace("Event", "")) (selected eventType filters.EventType)
+                    }
+                }
+
+                label (class' = "field") {
+                    span () { "Entity type" }
+                    let selectTag = UiHtml.attrs [ "name", "entityType" ] (select ())
+
+                    selectTag {
+                        option (value = "") { "Any entity" }
+                        for entityType in auditEntityTypes do
+                            UiHtml.optionTag entityType entityType (selected entityType filters.EntityType)
+                    }
+                }
+
+                field
+                    "From"
+                    (UiHtml.attrs [ "type", "date"; "name", "fromDate"; "value", (filters.FromDate |> Option.defaultValue String.Empty) ] (input ()))
+                    None
+
+                field
+                    "To"
+                    (UiHtml.attrs [ "type", "date"; "name", "toDate"; "value", (filters.ToDate |> Option.defaultValue String.Empty) ] (input ()))
+                    None
+
+                if filters.Scope = Some "app" then
+                    label (class' = "field") {
+                        span () { "Run events" }
+                        let includeValue = if filters.IncludeRunEvents then "true" else "false"
+                        let selectTag = UiHtml.attrs [ "name", "includeRunEvents" ] (select ())
+
+                        selectTag {
+                            UiHtml.optionTag "true" "Include run events" (includeValue = "true")
+                            UiHtml.optionTag "false" "Only app events" (includeValue = "false")
+                        }
+                    }
+            }
+
+            div (class' = "form-actions") {
+                a (href = clearHref, class' = "button button-ghost") { "Clear filters" }
+                button (type' = "submit", class' = "button") { "Apply filters" }
+            }
+        }
+
+    let auditPage (users: UserData list) (events: EnhancedEventData list) (page: int) (total: int) (scope: string option) (baseHref: string) (filters: AuditFilterValues) =
         let totalPages = max 1 ((total + UiModels.PageSize - 1) / UiModels.PageSize)
         let pageHref targetPage =
             let separator = if baseHref.Contains "?" then "&" else "?"
@@ -2151,25 +2307,38 @@ module Views =
 
         section (class' = "stack") {
             section (class' = "card") {
-                cardHeader "Audit log" (Some $"{total} events · Page {page} of {totalPages}")
+                div (class' = "toolbar") {
+                    div () { cardHeader (auditScopeTitle filters.Scope) (Some $"{total} events · Page {page} of {totalPages}") }
+                    a (href = baseHref, class' = "button button-ghost") { "Refresh" }
+                }
                 p () { scope |> Option.defaultValue "Showing all audit events." }
             }
-            for event in events do
-                let entityName = if String.IsNullOrWhiteSpace event.EntityName then event.EntityId else event.EntityName
 
-                article (class' = "card audit-card") {
-                    div (class' = "audit-meta") {
-                        span (class' = "badge") { UiFormat.eventType event.EventType }
-                        span (class' = "badge badge-muted") { UiFormat.entityType event.EntityType }
-                        span () { UiFormat.dateTime event.OccurredAt }
+            section (class' = "card") {
+                cardHeader "Filters" (Some "Narrow by actor, event/entity type, date range, and text search.")
+                auditFilterForm users filters
+            }
+
+            if List.isEmpty events then
+                emptyState "No audit events found" "Adjust the filters or clear search to see more events."
+            else
+                for event in events do
+                    let entityName = if String.IsNullOrWhiteSpace event.EntityName then event.EntityId else event.EntityName
+
+                    article (class' = "card audit-card") {
+                        div (class' = "audit-meta") {
+                            span (class' = "badge") { UiFormat.eventType event.EventType }
+                            span (class' = "badge badge-muted") { UiFormat.entityType event.EntityType }
+                            span () { UiFormat.dateTime event.OccurredAt }
+                        }
+                        h3 () { event.EventSummary }
+                        p () { $"{entityName} · Event {event.EventId.Substring(0, Math.Min(8, event.EventId.Length))} by {event.UserName}" }
+                        details () {
+                            summary () { "Raw event data" }
+                            pre (class' = "code-block") { code () { UiFormat.tryFormatJson event.EventData } }
+                        }
                     }
-                    h3 () { event.EventSummary }
-                    p () { $"{entityName} · Event {event.EventId.Substring(0, Math.Min(8, event.EventId.Length))} by {event.UserName}" }
-                    details () {
-                        summary () { "Raw event data" }
-                        pre (class' = "code-block") { code () { UiFormat.tryFormatJson event.EventData } }
-                    }
-                }
+
             div (class' = "pagination") {
                 span (class' = "pagination-status") { $"Page {page} of {totalPages}" }
                 if page > 1 then a (href = pageHref (page - 1), class' = "button button-secondary") { "Previous" }
