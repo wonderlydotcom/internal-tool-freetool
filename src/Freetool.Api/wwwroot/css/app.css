@@ -83,7 +83,7 @@ textarea { resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, m
 .template-input-shell .template-input-control::selection { background: rgba(37, 99, 235, .22); color: transparent; }
 .template-input-mirror { position: absolute; inset: 0; z-index: 1; overflow: hidden; padding: .65rem .75rem; color: var(--text); pointer-events: none; white-space: pre; font: inherit; }
 .template-input-shell-multiline .template-input-mirror { white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.template-token { border-radius: .3rem; padding: .05rem .15rem; font-weight: 700; }
+.template-token { border-radius: .25rem; padding: 0; font-weight: inherit; }
 .template-token-input { background: #dbeafe; color: #1d4ed8; }
 .template-token-user { background: #dcfce7; color: #166534; }
 .template-token-expression { background: #f3e8ff; color: #7e22ce; }
