@@ -1,18 +1,18 @@
 ---
-name: app-observability
-description: Use owner-safe logs, traces, metrics, and alerts paths and triage app telemetry without direct backend access.
+name: local-dev
+description: Run and seed internal tool app repos locally with the shared CLI while preserving data and secret safety boundaries.
 mcp_server: internal-tools
 mcp_tool: use_workflow
-mcp_workflow: app-observability
+mcp_workflow: local-dev
 mcp_repo: freetool
 mcp_kind: shared-stub
 ---
 
-# App Observability
+# Local Dev
 
 Call `internal-tools.use_workflow` with:
 
-- `workflow_name="app-observability"`
+- `workflow_name="local-dev"`
 - `repo_name="freetool"`
 
 If the task is not an obvious fit for this stub, call `internal-tools.recommend_workflows` first and then use the top shared workflow before editing.
