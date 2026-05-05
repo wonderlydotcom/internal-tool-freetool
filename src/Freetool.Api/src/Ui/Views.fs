@@ -1454,6 +1454,13 @@ module Views =
                         let rid = resourceId resource
                         let usedBy = apps |> List.filter (fun app -> app.ResourceId = resource.Id)
                         let editModalId = $"edit-resource-{rid}"
+                        let deleteConfirmText =
+                            if List.isEmpty usedBy then
+                                $"Delete resource {resource.Name.Value}?"
+                            else
+                                let appCount = List.length usedBy
+                                let appLabel = if appCount = 1 then "app uses" else "apps use"
+                                $"Delete resource {resource.Name.Value}? {appCount} {appLabel} this resource and may stop running."
 
                         article (class' = "resource-card") {
                             header (class' = "resource-card-header") {
@@ -1495,10 +1502,7 @@ module Views =
                                 if permissions.EditResource then
                                     iconModalOpenButton editModalId "Edit resource" "edit"
                                 if permissions.DeleteResource then
-                                    if List.isEmpty usedBy then
-                                        iconDeleteForm token $"/_ui/spaces/{sid}/resources/{rid}/delete" "Delete resource" $"Delete resource {resource.Name.Value}?"
-                                    else
-                                        span (class' = "badge badge-muted", title = "Delete apps that use this resource first.") { "In use" }
+                                    iconDeleteForm token $"/_ui/spaces/{sid}/resources/{rid}/delete" "Delete resource" deleteConfirmText
                             }
                         }
 
