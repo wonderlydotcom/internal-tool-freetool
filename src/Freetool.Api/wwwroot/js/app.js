@@ -42,6 +42,88 @@
       .forEach(updateTypedConfirmState);
   }
 
+  function editableNameInput(form) {
+    const input = form.querySelector("[data-editable-name-input]");
+    return input instanceof HTMLInputElement ? input : null;
+  }
+
+  function clearEditableNameError(form) {
+    const error = form.querySelector("[data-editable-name-error]");
+    if (!(error instanceof HTMLElement)) return;
+
+    error.textContent = "";
+    error.hidden = true;
+  }
+
+  function setEditableNameEditing(form, editing, shouldFocus = false) {
+    const input = editableNameInput(form);
+    if (!input || input.disabled) return;
+
+    input.readOnly = !editing;
+    form.classList.toggle("is-editing", editing);
+
+    if (editing && shouldFocus) {
+      window.setTimeout(() => {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }, 0);
+    }
+  }
+
+  function submitEditableNameForm(form) {
+    const input = editableNameInput(form);
+    if (!input || input.readOnly || form.dataset.saving === "true") return;
+
+    const initialValue = input.getAttribute("data-initial-value") || input.defaultValue || "";
+    const currentValue = input.value.trim();
+
+    if (currentValue === initialValue.trim()) {
+      input.value = initialValue;
+      clearEditableNameError(form);
+      setEditableNameEditing(form, false);
+      return;
+    }
+
+    if (!input.checkValidity()) {
+      input.reportValidity();
+      return;
+    }
+
+    form.dataset.saving = "true";
+    form.classList.add("is-saving");
+    setEditableNameEditing(form, false);
+    if (typeof form.requestSubmit === "function") form.requestSubmit();
+    else form.submit();
+  }
+
+  function initializeEditableNameForms(root = document) {
+    const forms = [];
+    if (root instanceof Element && root.matches("[data-editable-name-form]")) {
+      forms.push(root);
+    }
+    root.querySelectorAll?.("[data-editable-name-form]").forEach((form) => forms.push(form));
+
+    forms.forEach((form) => {
+      const input = editableNameInput(form);
+      if (!input || input.getAttribute("data-editable-name-autofocus") !== "true") return;
+
+      input.removeAttribute("data-editable-name-autofocus");
+      setEditableNameEditing(form, true, true);
+    });
+  }
+
+  function requestSubmitOnChange(control) {
+    const form = control.closest("form");
+    if (!(form instanceof HTMLFormElement) || form.dataset.saving === "true") return;
+
+    const initialValue = control.getAttribute("data-initial-value");
+    if (initialValue !== null && control.value === initialValue) return;
+
+    form.dataset.saving = "true";
+    if (typeof form.requestSubmit === "function") form.requestSubmit();
+    else form.submit();
+  }
+
   function resetFormControls(container) {
     container.querySelectorAll("input, textarea, select").forEach((control) => {
       if (control instanceof HTMLInputElement) {
@@ -987,6 +1069,25 @@
   });
 
   document.addEventListener("keydown", (event) => {
+    const editableInput = closest(event.target, "[data-editable-name-input]");
+    if (editableInput instanceof HTMLInputElement && !editableInput.readOnly) {
+      const form = editableInput.closest("[data-editable-name-form]");
+      if (form instanceof HTMLFormElement && event.key === "Enter") {
+        event.preventDefault();
+        submitEditableNameForm(form);
+        return;
+      }
+      if (event.key === "Escape") {
+        const initialValue = editableInput.getAttribute("data-initial-value") || editableInput.defaultValue || "";
+        editableInput.value = initialValue;
+        if (form instanceof HTMLFormElement) {
+          clearEditableNameError(form);
+          setEditableNameEditing(form, false);
+        }
+        return;
+      }
+    }
+
     const templateInput = closest(event.target, "[data-template-input]");
     if (!isTemplateControl(templateInput)) return;
 
@@ -1041,6 +1142,14 @@
   });
 
   document.addEventListener("focusout", (event) => {
+    const editableInput = closest(event.target, "[data-editable-name-input]");
+    if (editableInput instanceof HTMLInputElement && !editableInput.readOnly) {
+      const form = editableInput.closest("[data-editable-name-form]");
+      if (form instanceof HTMLFormElement) {
+        window.setTimeout(() => submitEditableNameForm(form), 0);
+      }
+    }
+
     const templateInput = closest(event.target, "[data-template-input]");
     if (!isTemplateControl(templateInput)) return;
 
@@ -1064,6 +1173,11 @@
       const container = permissionCheckbox.closest("[data-permissions-matrix]");
       if (container) updatePermissionsSaveState(container);
       return;
+    }
+
+    const autoSubmitControl = closest(event.target, "[data-auto-submit-on-change]");
+    if (autoSubmitControl instanceof HTMLSelectElement || autoSubmitControl instanceof HTMLInputElement) {
+      requestSubmitOnChange(autoSubmitControl);
     }
 
     const resourceSelect = closest(event.target, "[data-app-resource-select]");
@@ -1155,6 +1269,17 @@
     const clickedTemplateInput = closest(target, "[data-template-input]");
     if (isTemplateControl(clickedTemplateInput)) {
       window.setTimeout(() => maybeOpenExpressionAtCursor(clickedTemplateInput), 0);
+    }
+
+    const editableNameEdit = closest(target, "[data-editable-name-edit]");
+    if (editableNameEdit) {
+      event.preventDefault();
+      const form = editableNameEdit.closest("[data-editable-name-form]");
+      if (form instanceof HTMLFormElement) {
+        clearEditableNameError(form);
+        setEditableNameEditing(form, true, true);
+      }
+      return;
     }
 
     const dirtyReset = closest(target, "[data-dirty-reset]");
@@ -1266,6 +1391,7 @@
 
   initializePermissionsMatrices();
   initializeTypedConfirmForms();
+  initializeEditableNameForms();
   initializeAppConfigForms();
   initializeResourceForms();
   initializeSqlBuilders();
@@ -1275,6 +1401,7 @@
     mutations.forEach((mutation) => {
       mutation.addedNodes.forEach((node) => {
         if (node instanceof Element) {
+          initializeEditableNameForms(node);
           initializeAppConfigForms(node);
           initializeResourceForms(node);
           initializeSqlBuilders(node);
