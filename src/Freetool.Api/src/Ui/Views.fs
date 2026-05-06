@@ -1387,7 +1387,6 @@ module Views =
 
         section (class' = "stack") {
             folderBreadcrumb space effectiveFolderPath
-            spaceTabs space "contents"
             section (class' = "card") {
                 div (class' = "toolbar") {
                     div () { cardHeader folder.Name.Value (Some "Folder") }
