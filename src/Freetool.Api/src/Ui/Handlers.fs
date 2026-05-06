@@ -1564,27 +1564,64 @@ module Handlers =
             requireSpace ctx spaceId (fun space -> task {
                 do! validatePost ctx
                 let! posted = form ctx
+                let submittedName = formValue posted "Name"
                 let! allowed = isOrgAdminOrModerator ctx space
 
+                let patchNameForm value persistedValue availability error isEditing =
+                    DatastarResponse.patchElements
+                        ctx
+                        "#space-name-form"
+                        (Views.spaceNameSettingsForm
+                            (UiContext.antiforgeryToken ctx)
+                            spaceId
+                            value
+                            persistedValue
+                            availability
+                            error
+                            isEditing)
+
                 if not allowed then
-                    return!
-                        redirectWithFlash
-                            ctx
-                            $"/spaces/{spaceId}/settings"
-                            "error"
-                            "Only admins or moderators can rename spaces."
+                    let message = "Only admins or moderators can rename spaces."
+
+                    if DatastarResponse.isDatastarRequest ctx then
+                        return!
+                            patchNameForm
+                                space.Name
+                                space.Name
+                                (ActionAvailability.Denied message)
+                                (Some message)
+                                false
+                    else
+                        return! redirectWithFlash ctx $"/spaces/{spaceId}/settings" "error" message
                 else
                     let! result =
                         (spaceHandler ctx)
                             .HandleCommand(
-                                UpdateSpaceName(UiContext.actorUserId ctx, spaceId, { Name = formValue posted "Name" })
+                                UpdateSpaceName(UiContext.actorUserId ctx, spaceId, { Name = submittedName })
                             )
 
                     match result with
-                    | Ok _ -> return! redirectWithFlash ctx $"/spaces/{spaceId}/settings" "success" "Space renamed."
+                    | Ok(SpaceResult updated) ->
+                        if DatastarResponse.isDatastarRequest ctx then
+                            return! patchNameForm updated.Name updated.Name ActionAvailability.Allowed None false
+                        else
+                            return! redirectWithFlash ctx $"/spaces/{spaceId}/settings" "success" "Space renamed."
+                    | Ok _ ->
+                        let message = "Unexpected space command result."
+
+                        if DatastarResponse.isDatastarRequest ctx then
+                            return!
+                                patchNameForm submittedName space.Name ActionAvailability.Allowed (Some message) true
+                        else
+                            return! redirectWithFlash ctx $"/spaces/{spaceId}/settings" "error" message
                     | Error error ->
-                        return!
-                            redirectWithFlash ctx $"/spaces/{spaceId}/settings" "error" (UiFormat.domainError error)
+                        let message = UiFormat.domainError error
+
+                        if DatastarResponse.isDatastarRequest ctx then
+                            return!
+                                patchNameForm submittedName space.Name ActionAvailability.Allowed (Some message) true
+                        else
+                            return! redirectWithFlash ctx $"/spaces/{spaceId}/settings" "error" message
             })
 
     let changeModerator (spaceId: string) : EndpointHandler =

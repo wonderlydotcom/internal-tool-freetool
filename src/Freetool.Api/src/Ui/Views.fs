@@ -84,6 +84,17 @@ module Views =
             | None -> ()
         }
 
+    let private fieldError (error: string option) =
+        let errorTag =
+            UiHtml.attrs
+                ([ "id", "space-name-error"
+                   "class", "field-error"
+                   "data-editable-name-error", "true" ]
+                 @ UiHtml.whenAttr error.IsNone "hidden" "hidden")
+                (small ())
+
+        errorTag { error |> Option.defaultValue String.Empty }
+
     let private srOnly (text: string) : HtmlElement = span (class' = "sr-only") { text }
 
     let private isAllowed availability =
@@ -292,6 +303,70 @@ module Views =
             buttonTag {
                 span (class' = "button-icon") { iconSvg "trash" }
                 srOnly labelText
+            }
+        }
+
+    let spaceNameSettingsForm
+        (token: string)
+        (sid: string)
+        (value: string)
+        (persistedValue: string)
+        (availability: ActionAvailability)
+        (error: string option)
+        (isEditing: bool)
+        : HtmlElement =
+        let formTag =
+            UiHtml.enhancedPostForm
+                $"/_ui/spaces/{sid}/name"
+                [ "id", "space-name-form"
+                  "class", "settings-form space-name-form"
+                  "data-editable-name-form", "true" ]
+
+        formTag {
+            UiHtml.antiforgeryInput token
+            formDeniedNote availability
+            let fieldsetTag = fieldsetForAvailability availability
+
+            fieldsetTag {
+                label (class' = "field space-name-field") {
+                    span () { "Space name" }
+                    div (class' = "editable-input-row") {
+                        let inputTag =
+                            UiHtml.attrs
+                                ([ "type", "text"
+                                   "name", "Name"
+                                   "value", value
+                                   "placeholder", "Space name"
+                                   "class", "editable-input-row-control"
+                                   "autocomplete", "off"
+                                   "aria-describedby", "space-name-error"
+                                   "data-editable-name-input", "true"
+                                   "data-initial-value", persistedValue ]
+                                 @ UiHtml.requiredAttr true
+                                 @ if isEditing then
+                                       [ "data-editable-name-autofocus", "true" ]
+                                   else
+                                       [ "readonly", "readonly" ])
+                                (input ())
+
+                        inputTag
+
+                        let editButton =
+                            UiHtml.attrs
+                                [ "type", "button"
+                                  "class", "editable-input-row-button"
+                                  "data-editable-name-edit", "true"
+                                  "aria-label", "Edit space name"
+                                  "title", "Edit space name" ]
+                                (button ())
+
+                        editButton {
+                            span (class' = "button-icon") { iconSvg "edit" }
+                            srOnly "Edit space name"
+                        }
+                    }
+                    fieldError error
+                }
             }
         }
 
@@ -2813,7 +2888,7 @@ module Views =
         =
         let sid = spaceId space
         let renameSpaceAvailability = spaceAdminAvailability actionContext "rename spaces"
-        let changeModeratorAvailability = spaceAdminAvailability actionContext "change space moderators"
+        let changeModeratorAvailability = orgAdminAvailability actionContext.IsOrgAdmin actionContext.OrgAdminDisplayNames "change space moderators"
         let manageMembersAvailability = spaceAdminAvailability actionContext "manage space members"
         let updatePermissionsAvailability = spaceAdminAvailability actionContext "update member permissions"
         let deleteSpaceAvailability = orgAdminAvailability actionContext.IsOrgAdmin actionContext.OrgAdminDisplayNames "delete spaces"
@@ -2830,17 +2905,8 @@ module Views =
             section (class' = "grid grid-two") {
                 section (class' = "card") {
                     cardHeader "General settings" None
-                    let formTag16 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/name" []
-                    formTag16 {
-                        UiHtml.antiforgeryInput token
-                        formDeniedNote renameSpaceAvailability
-                        let fieldsetTag = fieldsetForAvailability renameSpaceAvailability
-                        fieldsetTag {
-                            field "Space name" (UiHtml.textInput "Name" space.Name true "Space name") None
-                        }
-                        submitButtonAction renameSpaceAvailability "Rename space"
-                    }
-                    let formTag17 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/moderator" []
+                    spaceNameSettingsForm token sid space.Name space.Name renameSpaceAvailability None false
+                    let formTag17 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/moderator" [ "class", "settings-form" ]
                     formTag17 {
                         UiHtml.antiforgeryInput token
                         formDeniedNote changeModeratorAvailability
@@ -2848,16 +2914,21 @@ module Views =
                         fieldsetTag {
                             label (class' = "field") {
                                 span () { "Moderator" }
-                                let selectTag3 = UiHtml.attrs [ "name", "NewModeratorUserId"; "required", "required" ] (select ())
+                                let selectTag3 =
+                                    UiHtml.attrs
+                                        [ "name", "NewModeratorUserId"
+                                          "required", "required"
+                                          "data-auto-submit-on-change", "true"
+                                          "data-initial-value", space.ModeratorUserId.Value.ToString() ]
+                                        (select ())
                                 selectTag3 {
                                     for user in users do
                                         UiHtml.optionTag (userId user) ($"{user.Name} ({user.Email})") (user.Id = space.ModeratorUserId)
                                 }
                             }
                         }
-                        submitButtonAction changeModeratorAvailability "Change moderator"
                     }
-                    let formTag18 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/members/add" []
+                    let formTag18 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/members/add" [ "class", "settings-form" ]
                     formTag18 {
                         UiHtml.antiforgeryInput token
                         formDeniedNote manageMembersAvailability
