@@ -328,18 +328,22 @@ module Views =
             let fieldsetTag = fieldsetForAvailability availability
 
             fieldsetTag {
-                label (class' = "field space-name-field") {
-                    span () { "Space name" }
+                div (class' = "field space-name-field") {
+                    let labelTag = UiHtml.attrs [ "for", "space-name-input" ] (label ())
+                    labelTag { "Space name" }
+
                     div (class' = "editable-input-row") {
                         let inputTag =
                             UiHtml.attrs
                                 ([ "type", "text"
+                                   "id", "space-name-input"
                                    "name", "Name"
                                    "value", value
                                    "placeholder", "Space name"
                                    "class", "editable-input-row-control"
                                    "autocomplete", "off"
                                    "aria-describedby", "space-name-error"
+                                   "aria-readonly", if isEditing then "false" else "true"
                                    "data-editable-name-input", "true"
                                    "data-initial-value", persistedValue ]
                                  @ UiHtml.requiredAttr true

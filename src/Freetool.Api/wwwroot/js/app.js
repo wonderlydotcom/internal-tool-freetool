@@ -60,6 +60,8 @@
     if (!input || input.disabled) return;
 
     input.readOnly = !editing;
+    input.toggleAttribute("readonly", !editing);
+    input.setAttribute("aria-readonly", editing ? "false" : "true");
     form.classList.toggle("is-editing", editing);
 
     if (editing && shouldFocus) {
