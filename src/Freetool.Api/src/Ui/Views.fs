@@ -1025,18 +1025,58 @@ module Views =
              @ folderBreadcrumbItems space folderPath None
              @ [ { Label = nodeLabel; Href = Some nodeHref }; { Label = runLabel; Href = None } ])
 
+    type private ScopedTab = {
+        Label: string
+        Href: string
+        Key: string
+    }
+
+    let private scopedTabs (ariaLabel: string) (active: string) (items: ScopedTab list) : HtmlElement =
+        let navTag = UiHtml.attrs [ "class", "tabs"; "aria-label", ariaLabel ] (nav ())
+
+        navTag {
+            for item in items do
+                let tabAttrs =
+                    [ "href", item.Href
+                      "class", if active = item.Key then "tab is-active" else "tab" ]
+                    @ (if active = item.Key then [ "aria-current", "page" ] else [])
+
+                let tab = UiHtml.attrs tabAttrs (a ())
+                tab { item.Label }
+        }
+
     let private spaceTabs (space: SpaceData) (active: string) =
         let sid = spaceId space
-        nav (class' = "tabs") {
-            let tab (href: string) (key: string) (labelText: string) : HtmlElement =
-                let tag = UiHtml.attrs [ "href", href; "class", if active = key then "tab is-active" else "tab" ] (a ())
-                tag { labelText }
 
-            tab $"/spaces/{sid}" "builder" "Builder"
-            tab $"/spaces/{sid}/resources" "resources" "Resources"
-            tab $"/spaces/{sid}/settings" "settings" "Settings"
-            tab $"/spaces/{sid}/trash" "trash" "Trash"
-        }
+        scopedTabs
+            "Space navigation"
+            active
+            [ { Label = "Contents"; Href = $"/spaces/{sid}"; Key = "contents" }
+              { Label = "Resources"; Href = $"/spaces/{sid}/resources"; Key = "resources" }
+              { Label = "Settings"; Href = $"/spaces/{sid}/settings"; Key = "settings" }
+              { Label = "Trash"; Href = $"/spaces/{sid}/trash"; Key = "trash" } ]
+
+    let private appTabs (space: SpaceData) (app: AppData) (active: string) =
+        let sid = spaceId space
+        let aid = appId app
+
+        scopedTabs
+            "App navigation"
+            active
+            [ { Label = "Builder"; Href = $"/spaces/{sid}/{aid}"; Key = "builder" }
+              { Label = "Run"; Href = $"/spaces/{sid}/{aid}/run"; Key = "run" }
+              { Label = "Audit"; Href = $"/audit?scope=app&appId={aid}"; Key = "audit" } ]
+
+    let private dashboardTabs (space: SpaceData) (dashboard: DashboardData) (active: string) =
+        let sid = spaceId space
+        let did = dashboardId dashboard
+
+        scopedTabs
+            "Dashboard navigation"
+            active
+            [ { Label = "Builder"; Href = $"/spaces/{sid}/{did}"; Key = "builder" }
+              { Label = "Run"; Href = $"/spaces/{sid}/{did}/dashboard-run"; Key = "run" }
+              { Label = "Audit"; Href = $"/audit?scope=dashboard&dashboardId={did}"; Key = "audit" } ]
 
     let private objectIcon kind =
         match kind with
@@ -1247,7 +1287,7 @@ module Views =
 
         section (class' = "stack") {
             spaceHomeBreadcrumb space
-            spaceTabs space "builder"
+            spaceTabs space "contents"
             section (class' = "card") {
                 div (class' = "toolbar") {
                     div () { cardHeader space.Name (Some "Root folder") }
@@ -1347,7 +1387,7 @@ module Views =
 
         section (class' = "stack") {
             folderBreadcrumb space effectiveFolderPath
-            spaceTabs space "builder"
+            spaceTabs space "contents"
             section (class' = "card") {
                 div (class' = "toolbar") {
                     div () { cardHeader folder.Name.Value (Some "Folder") }
@@ -1708,12 +1748,11 @@ module Views =
         let runAppAvailability = spaceActionAvailability actionContext permissions.RunApp "run apps"
         section (class' = "stack") {
             nodeBreadcrumb space folderPath app.Name
-            spaceTabs space "builder"
+            appTabs space app "builder"
             section (class' = "card") {
                 cardHeader app.Name (Some "App editor")
                 div (class' = "actions") {
                     buttonAction runAppAvailability $"/spaces/{sid}/{aid}/run" "Run app" "button"
-                    a (href = $"/audit?scope=app&appId={aid}", class' = "button button-ghost") { "Audit" }
                 }
                 div (class' = "form-grid") {
                     let formTag9 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/apps/{aid}/name" []
@@ -2260,14 +2299,13 @@ module Views =
 
         section (class' = "stack run-page") {
             runBreadcrumb space folderPath $"/spaces/{sid}/{aid}" app.Name "Run"
-            spaceTabs space "builder"
+            appTabs space app "run"
 
             section (class' = "card run-hero") {
                 div (class' = "card-header-actions") {
                     cardHeader $"Run {app.Name}" app.Description
                     div (class' = "actions") {
                         buttonAction editAppAvailability $"/spaces/{sid}/{aid}" "Edit app" "button button-secondary"
-                        a (href = $"/audit?scope=app&appId={aid}", class' = "button button-ghost") { "Audit" }
                     }
                 }
 
@@ -2350,12 +2388,11 @@ module Views =
         let runDashboardAvailability = spaceActionAvailability actionContext permissions.RunDashboard "run dashboards"
         section (class' = "stack") {
             nodeBreadcrumb space folderPath dashboard.Name.Value
-            spaceTabs space "builder"
+            dashboardTabs space dashboard "builder"
             section (class' = "card") {
                 cardHeader dashboard.Name.Value (Some "Dashboard editor")
                 div (class' = "actions") {
                     buttonAction runDashboardAvailability $"/spaces/{sid}/{did}/dashboard-run" "Run dashboard" "button"
-                    a (href = $"/audit?scope=dashboard&dashboardId={did}", class' = "button button-ghost") { "Audit" }
                 }
                 let formTag13 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/dashboards/{did}/name" []
                 formTag13 {
@@ -2414,7 +2451,7 @@ module Views =
             | _, ActionAvailability.Denied reason -> ActionAvailability.Denied reason
         section (class' = "stack") {
             runBreadcrumb space folderPath $"/spaces/{sid}/{did}" dashboard.Name.Value "Run"
-            spaceTabs space "builder"
+            dashboardTabs space dashboard "run"
             section (class' = "card") {
                 cardHeader $"Run {dashboard.Name.Value}" (Some "Prepare and action execution uses the existing dashboard handlers.")
                 let formTag15 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/dashboards/{did}/prepare" []

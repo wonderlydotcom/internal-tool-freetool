@@ -169,6 +169,36 @@ module UiRunAppViewTests =
         Assert.Contains("<option value=\"end_of_cycle\" selected=\"selected\">End of billing cycle</option>", html)
 
     [<Fact>]
+    let ``Run app page uses app scoped navigation instead of space navigation`` () =
+        let space = sampleSpace ()
+        let app = sampleApp []
+        let aid = app.Id.Value.ToString()
+
+        let html =
+            Views.runAppPage "token" space [] app None actionContext |> Render.toString
+
+        Assert.Contains("aria-label=\"App navigation\"", html)
+        Assert.Contains("aria-current=\"page\">Run</a>", html)
+        Assert.Contains($"/audit?scope=app&amp;appId={aid}", html)
+        Assert.DoesNotContain("aria-label=\"Space navigation\"", html)
+        Assert.DoesNotContain(">Resources</a>", html)
+        Assert.DoesNotContain(">Settings</a>", html)
+        Assert.DoesNotContain(">Trash</a>", html)
+
+    [<Fact>]
+    let ``Folder page labels space builder navigation as contents`` () =
+        let space = sampleSpace ()
+        let folder = sampleFolder space
+
+        let html =
+            Views.folderPage "token" space folder [ folder ] [] [] [] [] actionContext
+            |> Render.toString
+
+        Assert.Contains("aria-label=\"Space navigation\"", html)
+        Assert.Contains(">Contents</a>", html)
+        Assert.DoesNotContain(">Builder</a>", html)
+
+    [<Fact>]
     let ``Run app page disables edit action when user cannot edit apps`` () =
         let permissions = { allPermissions with EditApp = false }
 
