@@ -511,6 +511,86 @@ module Handlers =
             : SpacePermissionsDto)
     }
 
+    let private userContactName (user: UserData) =
+        let displayName =
+            if String.IsNullOrWhiteSpace user.Name then
+                user.Email
+            else
+                user.Name
+
+        if
+            String.IsNullOrWhiteSpace user.Email
+            || String.Equals(displayName, user.Email, StringComparison.OrdinalIgnoreCase)
+        then
+            displayName
+        else
+            $"{displayName} ({user.Email})"
+
+    let private tryUserIdFromString (value: string) =
+        match Guid.TryParse value with
+        | true, guid -> Some(UserId.FromGuid guid)
+        | _ -> None
+
+    let private userContactNameById (ctx: HttpContext) (userId: UserId) = task {
+        let! user = (users ctx).GetByIdAsync userId
+        return user |> Option.map (fun user -> userContactName user.State)
+    }
+
+    let private orgAdminDisplayNames (ctx: HttpContext) = task {
+        try
+            let! tuples = (relationshipReader ctx).ReadRelationshipsAsync(AuthObject.OrganizationObject "default")
+
+            let adminIds =
+                tuples
+                |> List.choose (fun tuple ->
+                    match tuple.Subject, tuple.Relation with
+                    | AuthSubject.User userId, AuthRelation.OrganizationAdmin -> tryUserIdFromString userId
+                    | _ -> None)
+                |> List.distinct
+
+            let mutable displayNames = []
+
+            for adminId in adminIds do
+                let! displayName = userContactNameById ctx adminId
+
+                match displayName with
+                | Some value -> displayNames <- value :: displayNames
+                | None -> ()
+
+            return displayNames |> List.rev
+        with _ ->
+            return []
+    }
+
+    let private isSpaceModerator (ctx: HttpContext) (space: SpaceData) = task {
+        let actor = UiContext.actorUserId ctx
+
+        if space.ModeratorUserId = actor then
+            return true
+        else
+            return!
+                (auth ctx).CheckPermissionAsync
+                    (AuthSubject.User(actor.Value.ToString()))
+                    AuthRelation.SpaceModerator
+                    (AuthObject.SpaceObject(space.Id.Value.ToString()))
+    }
+
+    let private getSpaceActionContext (ctx: HttpContext) (space: SpaceData) : Task<SpaceActionContext> = task {
+        let! permissions = getSpaceUiPermissions ctx space.Id
+        let! moderatorDisplayName = userContactNameById ctx space.ModeratorUserId
+        let! adminDisplayNames = orgAdminDisplayNames ctx
+        let! admin = isOrgAdmin ctx
+        let! moderator = isSpaceModerator ctx space
+
+        return {
+            Permissions = permissions
+            ModeratorDisplayName = moderatorDisplayName
+            OrgAdminDisplayNames = adminDisplayNames
+            IsOrgAdmin = admin
+            IsSpaceModerator = moderator
+        }
+    }
+
     let private getAccessibleSpaces (ctx: HttpContext) = task {
         let! admin = isOrgAdmin ctx
 
@@ -703,12 +783,13 @@ module Handlers =
             let! accessible = getAccessibleSpaces ctx
             let! userList = allUsers ctx
             let! admin = isOrgAdmin ctx
+            let! adminDisplayNames = orgAdminDisplayNames ctx
             let token = UiContext.antiforgeryToken ctx
 
             let content =
                 match accessible with
-                | [] -> Views.noSpaces token admin userList
-                | spaces -> Views.spacesList token spaces userList admin
+                | [] -> Views.noSpaces token admin adminDisplayNames userList
+                | spaces -> Views.spacesList token spaces userList admin adminDisplayNames
 
             return! writePage ctx "spaces" "Spaces" content
         }
@@ -737,7 +818,7 @@ module Handlers =
                     |> List.sortBy (fun dashboard -> dashboard.Name.Value)
 
                 let! resources = allResourcesForSpace ctx space
-                let! permissions = getSpaceUiPermissions ctx space.Id
+                let! actionContext = getSpaceActionContext ctx space
 
                 return!
                     writePage
@@ -751,7 +832,7 @@ module Handlers =
                             rootApps
                             rootDashboards
                             resources
-                            permissions)
+                            actionContext)
             })
 
     let nodePage (spaceId: string) (nodeId: string) : EndpointHandler =
@@ -773,7 +854,7 @@ module Handlers =
                         let! folderApps = (apps ctx).GetByFolderIdAsync fid 0 Int32.MaxValue
                         let! folderDashboards = (dashboards ctx).GetByFolderIdAsync fid 0 Int32.MaxValue
                         let! folderResources = allResourcesForSpace ctx space
-                        let! permissions = getSpaceUiPermissions ctx space.Id
+                        let! actionContext = getSpaceActionContext ctx space
 
                         return!
                             writePage
@@ -793,7 +874,7 @@ module Handlers =
                                      |> List.map (fun dashboard -> dashboard.State)
                                      |> List.sortBy (fun dashboard -> dashboard.Name.Value))
                                     folderResources
-                                    permissions)
+                                    actionContext)
                     | Some _ ->
                         return!
                             writeStatus
@@ -816,6 +897,8 @@ module Handlers =
 
                                 match resource with
                                 | Some resource ->
+                                    let! actionContext = getSpaceActionContext ctx space
+
                                     return!
                                         writePage
                                             ctx
@@ -826,7 +909,8 @@ module Handlers =
                                                 space
                                                 folderPath
                                                 (ResponseSanitizer.sanitizeApp app.State)
-                                                (ResponseSanitizer.sanitizeResource resource.State))
+                                                (ResponseSanitizer.sanitizeResource resource.State)
+                                                actionContext)
                                 | None ->
                                     return!
                                         writeStatus
@@ -852,6 +936,7 @@ module Handlers =
                                 if owningSpace |> Option.exists (fun owning -> owning.Id = space.Id) then
                                     let! allApps = (apps ctx).GetBySpaceIdsAsync [ space.Id ] 0 Int32.MaxValue
                                     let! allFolders = allFoldersForSpace ctx space
+                                    let! actionContext = getSpaceActionContext ctx space
                                     let folderPath = folderPathFrom allFolders dashboard.State.FolderId
 
                                     return!
@@ -866,7 +951,8 @@ module Handlers =
                                                 dashboard.State
                                                 (allApps
                                                  |> List.map (fun app -> ResponseSanitizer.sanitizeApp app.State)
-                                                 |> List.sortBy (fun app -> app.Name)))
+                                                 |> List.sortBy (fun app -> app.Name))
+                                                actionContext)
                                 else
                                     return!
                                         writeStatus
@@ -888,7 +974,7 @@ module Handlers =
             requireSpace ctx spaceId (fun space -> task {
                 let! resourceList = allResourcesForSpace ctx space
                 let! appList = (apps ctx).GetBySpaceIdsAsync [ space.Id ] 0 Int32.MaxValue
-                let! permissions = getSpaceUiPermissions ctx space.Id
+                let! actionContext = getSpaceActionContext ctx space
 
                 return!
                     writePage
@@ -900,7 +986,7 @@ module Handlers =
                             space
                             resourceList
                             (appList |> List.map (fun app -> ResponseSanitizer.sanitizeApp app.State))
-                            permissions)
+                            actionContext)
             })
 
     let settingsPage (spaceId: string) : EndpointHandler =
@@ -940,12 +1026,20 @@ module Handlers =
                         DeleteFolder = false
                       }
 
+                let! actionContext = getSpaceActionContext ctx space
+
                 return!
                     writePage
                         ctx
                         "spaces"
                         $"{space.Name} Settings"
-                        (Views.settingsPage (UiContext.antiforgeryToken ctx) space userList members defaultPermissions)
+                        (Views.settingsPage
+                            (UiContext.antiforgeryToken ctx)
+                            space
+                            userList
+                            members
+                            defaultPermissions
+                            actionContext)
             })
 
     let permissionsAlias (spaceId: string) : EndpointHandler =
@@ -1275,13 +1369,20 @@ module Handlers =
                 let! trashApps = (apps ctx).GetDeletedByFolderIdsAsync folderIds
                 let! trashFolders = (folders ctx).GetDeletedBySpaceAsync space.Id
                 let! trashResources = (resources ctx).GetDeletedBySpaceAsync space.Id
+                let! actionContext = getSpaceActionContext ctx space
 
                 return!
                     writePage
                         ctx
                         "spaces"
                         $"{space.Name} Trash"
-                        (Views.trashPage (UiContext.antiforgeryToken ctx) space trashApps trashFolders trashResources)
+                        (Views.trashPage
+                            (UiContext.antiforgeryToken ctx)
+                            space
+                            trashApps
+                            trashFolders
+                            trashResources
+                            actionContext)
             })
 
     let runAppPage (spaceId: string) (appId: string) : EndpointHandler =
@@ -1300,6 +1401,7 @@ module Handlers =
 
                         if owningSpace |> Option.exists (fun owning -> owning.Id = space.Id) then
                             let! allFolders = allFoldersForSpace ctx space
+                            let! actionContext = getSpaceActionContext ctx space
                             let folderPath = folderPathFrom allFolders app.State.FolderId
 
                             return!
@@ -1312,7 +1414,8 @@ module Handlers =
                                         space
                                         folderPath
                                         (ResponseSanitizer.sanitizeApp app.State)
-                                        None)
+                                        None
+                                        actionContext)
                         else
                             return!
                                 writeStatus
@@ -1344,6 +1447,7 @@ module Handlers =
 
                         if owningSpace |> Option.exists (fun owning -> owning.Id = space.Id) then
                             let! allFolders = allFoldersForSpace ctx space
+                            let! actionContext = getSpaceActionContext ctx space
                             let folderPath = folderPathFrom allFolders dashboard.State.FolderId
 
                             return!
@@ -1356,7 +1460,8 @@ module Handlers =
                                         space
                                         folderPath
                                         dashboard.State
-                                        None)
+                                        None
+                                        actionContext)
                         else
                             return!
                                 writeStatus
@@ -2706,6 +2811,7 @@ module Handlers =
                                     ctx.Response.Headers.CacheControl <- "no-store"
                                     let sanitized = ResponseSanitizer.sanitizeRun run
                                     let! allFolders = allFoldersForSpace ctx space
+                                    let! actionContext = getSpaceActionContext ctx space
                                     let folderPath = folderPathFrom allFolders app.State.FolderId
 
                                     let! model =
@@ -2727,7 +2833,8 @@ module Handlers =
                                                     space
                                                     folderPath
                                                     (ResponseSanitizer.sanitizeApp app.State)
-                                                    (Some sanitized))
+                                                    (Some sanitized)
+                                                    actionContext)
                                         )
                                 | Ok _ ->
                                     return!
@@ -2978,6 +3085,7 @@ module Handlers =
                                         $"Status: {response.Status}\nPrepare run: {response.PrepareRunId}\nResponse: {response.Response |> Option.defaultValue String.Empty}\nError: {response.ErrorMessage |> Option.defaultValue String.Empty}"
 
                                     let! allFolders = allFoldersForSpace ctx space
+                                    let! actionContext = getSpaceActionContext ctx space
                                     let folderPath = folderPathFrom allFolders dashboard.State.FolderId
 
                                     let! model =
@@ -2999,7 +3107,8 @@ module Handlers =
                                                     space
                                                     folderPath
                                                     dashboard.State
-                                                    (Some text))
+                                                    (Some text)
+                                                    actionContext)
                                         )
                                 | Ok _ ->
                                     return!
