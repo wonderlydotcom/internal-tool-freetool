@@ -186,7 +186,7 @@ module UiRunAppViewTests =
         Assert.DoesNotContain(">Trash</a>", html)
 
     [<Fact>]
-    let ``Folder page labels space builder navigation as contents`` () =
+    let ``Folder page hides space and app scoped navigation`` () =
         let space = sampleSpace ()
         let folder = sampleFolder space
 
@@ -194,8 +194,12 @@ module UiRunAppViewTests =
             Views.folderPage "token" space folder [ folder ] [] [] [] [] actionContext
             |> Render.toString
 
-        Assert.Contains("aria-label=\"Space navigation\"", html)
-        Assert.Contains(">Contents</a>", html)
+        Assert.DoesNotContain("aria-label=\"Space navigation\"", html)
+        Assert.DoesNotContain("aria-label=\"App navigation\"", html)
+        Assert.DoesNotContain(">Contents</a>", html)
+        Assert.DoesNotContain(">Resources</a>", html)
+        Assert.DoesNotContain(">Settings</a>", html)
+        Assert.DoesNotContain(">Trash</a>", html)
         Assert.DoesNotContain(">Builder</a>", html)
 
     [<Fact>]
