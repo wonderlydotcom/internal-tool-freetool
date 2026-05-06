@@ -86,6 +86,54 @@ module Views =
 
     let private srOnly (text: string) : HtmlElement = span (class' = "sr-only") { text }
 
+    let private isAllowed availability =
+        match availability with
+        | ActionAvailability.Allowed -> true
+        | ActionAvailability.Denied _ -> false
+
+    let private isDenied availability = not (isAllowed availability)
+
+    let private spaceModeratorAsk (actionContext: SpaceActionContext) =
+        match actionContext.ModeratorDisplayName with
+        | Some moderator when not (String.IsNullOrWhiteSpace moderator) ->
+            $"Ask Space Moderator ({moderator}) to grant access."
+        | _ -> "Ask your space moderator to grant access."
+
+    let private orgAdminAsk (adminDisplayNames: string list) =
+        match adminDisplayNames |> List.filter (String.IsNullOrWhiteSpace >> not) with
+        | [] -> "Ask an organization administrator."
+        | [ admin ] -> $"Ask Org Admin ({admin})."
+        | first :: second :: _ ->
+            $"Ask Org Admin ({first}), Org Admin ({second}), or another organization administrator."
+
+    let private spacePermissionDenied (actionContext: SpaceActionContext) (actionText: string) =
+        $"You do not have permission to {actionText}. {spaceModeratorAsk actionContext}"
+
+    let private spaceAdminDenied (actionContext: SpaceActionContext) (actionText: string) =
+        $"Only space moderators and organization administrators can {actionText}. {spaceModeratorAsk actionContext}"
+
+    let private orgAdminDenied (adminDisplayNames: string list) (actionText: string) =
+        $"Only organization administrators can {actionText}. {orgAdminAsk adminDisplayNames}"
+
+    let private availableWhen allowed reason =
+        if allowed then ActionAvailability.Allowed else ActionAvailability.Denied reason
+
+    let private spaceActionAvailability (actionContext: SpaceActionContext) allowed actionText =
+        availableWhen allowed (spacePermissionDenied actionContext actionText)
+
+    let private spaceAdminAvailability (actionContext: SpaceActionContext) actionText =
+        availableWhen
+            (actionContext.IsOrgAdmin || actionContext.IsSpaceModerator)
+            (spaceAdminDenied actionContext actionText)
+
+    let private orgAdminAvailability isOrgAdmin adminDisplayNames actionText =
+        availableWhen isOrgAdmin (orgAdminDenied adminDisplayNames actionText)
+
+    let private deniedReason availability =
+        match availability with
+        | ActionAvailability.Allowed -> None
+        | ActionAvailability.Denied reason -> Some reason
+
     let private iconSvg (iconName: string) : HtmlElement =
         let normalized =
             match iconName with
@@ -148,6 +196,84 @@ module Views =
             srOnly labelText
         }
 
+    let private disabledAction (reason: string) (content: HtmlElement) : HtmlElement =
+        let wrapper =
+            UiHtml.attrs
+                [ "class", "disabled-action"
+                  "tabindex", "0"
+                  "title", reason
+                  "aria-label", reason ]
+                (span ())
+
+        wrapper {
+            content
+            srOnly reason
+        }
+
+    let private disabledButton (labelText: string) (iconName: string option) (buttonClass: string) (reason: string) : HtmlElement =
+        let tag =
+            UiHtml.attrs
+                [ "type", "button"
+                  "class", $"{buttonClass} disabled-action-control"
+                  "disabled", "disabled"
+                  "aria-disabled", "true"
+                  "title", reason ]
+                (button ())
+
+        tag {
+            match iconName with
+            | Some icon -> span (class' = "button-icon") { iconSvg icon }
+            | None -> ()
+            span () { labelText }
+        }
+
+    let private disabledIconButton (labelText: string) (iconName: string) (extraClass: string) (reason: string) : HtmlElement =
+        let iconClass =
+            if String.IsNullOrWhiteSpace extraClass then
+                "icon-button disabled-action-control"
+            else
+                $"icon-button {extraClass} disabled-action-control"
+
+        let tag =
+            UiHtml.attrs
+                [ "type", "button"
+                  "class", iconClass
+                  "disabled", "disabled"
+                  "aria-disabled", "true"
+                  "aria-label", labelText
+                  "title", reason ]
+                (button ())
+
+        tag {
+            span (class' = "button-icon") { iconSvg iconName }
+            srOnly labelText
+        }
+
+    let private buttonAction (availability: ActionAvailability) (href: string) (labelText: string) (buttonClass: string) : HtmlElement =
+        match availability with
+        | ActionAvailability.Allowed -> a (href = href, class' = buttonClass) { labelText }
+        | ActionAvailability.Denied reason -> disabledAction reason (disabledButton labelText None buttonClass reason)
+
+    let private iconLinkAction (availability: ActionAvailability) (href: string) (labelText: string) (iconName: string) : HtmlElement =
+        match availability with
+        | ActionAvailability.Allowed -> iconOnlyLink href labelText iconName
+        | ActionAvailability.Denied reason -> disabledAction reason (disabledIconButton labelText iconName String.Empty reason)
+
+    let private submitButtonAction (availability: ActionAvailability) (labelText: string) : HtmlElement =
+        match availability with
+        | ActionAvailability.Allowed -> UiHtml.submitButton labelText
+        | ActionAvailability.Denied reason -> disabledAction reason (disabledButton labelText None "button" reason)
+
+    let private formDeniedNote (availability: ActionAvailability) : HtmlElement =
+        match availability with
+        | ActionAvailability.Allowed -> raw String.Empty
+        | ActionAvailability.Denied reason -> p (class' = "inline-denied-note") { reason }
+
+    let private fieldsetForAvailability (availability: ActionAvailability) =
+        UiHtml.attrs
+            ([ "class", "form-fieldset" ] @ UiHtml.disabledAttr (isDenied availability))
+            (fieldset ())
+
     let private iconDeleteForm (token: string) (action: string) (labelText: string) (confirmText: string) : HtmlElement =
         let formTag =
             UiHtml.enhancedPostForm action [ "class", "inline-icon-form"; "data-confirm", confirmText ]
@@ -185,6 +311,33 @@ module Views =
 
     let private iconModalOpenButton (modalId: string) (labelText: string) (iconName: string) : HtmlElement =
         iconOnlyButton labelText iconName [ "data-modal-open", modalId ]
+
+    let private modalButtonAction
+        (availability: ActionAvailability)
+        (modalId: string)
+        (labelText: string)
+        (iconName: string)
+        (buttonClass: string)
+        : HtmlElement =
+        match availability with
+        | ActionAvailability.Allowed -> modalOpenButton modalId labelText iconName buttonClass
+        | ActionAvailability.Denied reason -> disabledAction reason (disabledButton labelText (Some iconName) buttonClass reason)
+
+    let private iconModalButtonAction (availability: ActionAvailability) (modalId: string) (labelText: string) (iconName: string) : HtmlElement =
+        match availability with
+        | ActionAvailability.Allowed -> iconModalOpenButton modalId labelText iconName
+        | ActionAvailability.Denied reason -> disabledAction reason (disabledIconButton labelText iconName String.Empty reason)
+
+    let private deleteFormAction
+        (availability: ActionAvailability)
+        (token: string)
+        (action: string)
+        (labelText: string)
+        (confirmText: string)
+        : HtmlElement =
+        match availability with
+        | ActionAvailability.Allowed -> iconDeleteForm token action labelText confirmText
+        | ActionAvailability.Denied reason -> disabledAction reason (disabledIconButton labelText "trash" "icon-button-danger" reason)
 
     let private modalDialog (modalId: string) (title: string) (subtitle: string option) (content: HtmlElement) =
         dialog (id = modalId, class' = "modal") {
@@ -1019,20 +1172,23 @@ module Views =
             UiHtml.submitButton "Create dashboard"
         }
 
-    let noSpaces (token: string) (isOrgAdmin: bool) (users: UserData list) =
+    let noSpaces (token: string) (isOrgAdmin: bool) (orgAdminDisplayNames: string list) (users: UserData list) =
         let modalId = "create-space-modal"
+        let createSpaceAvailability = orgAdminAvailability isOrgAdmin orgAdminDisplayNames "create spaces"
 
         section (class' = "stack") {
             spacesListBreadcrumb ()
             emptyState "No spaces yet" "Create a space to start building internal tools."
 
+            div (class' = "actions") { modalButtonAction createSpaceAvailability modalId "New Space" "plus" "button" }
+
             if isOrgAdmin then
-                div (class' = "actions") { modalOpenButton modalId "New Space" "plus" "button" }
                 modalDialog modalId "Create space" (Some "Spaces group resources, folders, apps, dashboards, and permissions.") (createSpaceForm token users)
         }
 
-    let spacesList (token: string) (spaces: SpaceData list) (users: UserData list) (isOrgAdmin: bool) =
+    let spacesList (token: string) (spaces: SpaceData list) (users: UserData list) (isOrgAdmin: bool) (orgAdminDisplayNames: string list) =
         let modalId = "create-space-modal"
+        let createSpaceAvailability = orgAdminAvailability isOrgAdmin orgAdminDisplayNames "create spaces"
 
         section (class' = "stack") {
             spacesListBreadcrumb ()
@@ -1042,8 +1198,7 @@ module Views =
                     p () { $"{List.length spaces} visible spaces" }
                 }
 
-                if isOrgAdmin then
-                    modalOpenButton modalId "New Space" "plus" "button"
+                modalButtonAction createSpaceAvailability modalId "New Space" "plus" "button"
             }
 
             section (class' = "card") {
@@ -1075,10 +1230,20 @@ module Views =
         (apps: AppData list)
         (dashboards: DashboardData list)
         (resources: ResourceData list)
-        (permissions: SpacePermissionsDto)
+        (actionContext: SpaceActionContext)
         =
         let sid = spaceId space
+        let permissions = actionContext.Permissions
         let createFolderModalId = $"create-folder-{sid}"
+        let createFolderAvailability = spaceActionAvailability actionContext permissions.CreateFolder "create folders"
+        let editFolderAvailability = spaceActionAvailability actionContext permissions.EditFolder "edit folders"
+        let deleteFolderAvailability = spaceActionAvailability actionContext permissions.DeleteFolder "delete folders"
+        let runAppAvailability = spaceActionAvailability actionContext permissions.RunApp "run apps"
+        let editAppAvailability = spaceActionAvailability actionContext permissions.EditApp "edit apps"
+        let deleteAppAvailability = spaceActionAvailability actionContext permissions.DeleteApp "delete apps"
+        let runDashboardAvailability = spaceActionAvailability actionContext permissions.RunDashboard "run dashboards"
+        let editDashboardAvailability = spaceActionAvailability actionContext permissions.EditDashboard "edit dashboards"
+        let deleteDashboardAvailability = spaceActionAvailability actionContext permissions.DeleteDashboard "delete dashboards"
 
         section (class' = "stack") {
             spaceHomeBreadcrumb space
@@ -1087,8 +1252,7 @@ module Views =
                 div (class' = "toolbar") {
                     div () { cardHeader space.Name (Some "Root folder") }
                     div (class' = "actions") {
-                        if permissions.CreateFolder then
-                            modalOpenButton createFolderModalId "New Folder" "plus" "button"
+                        modalButtonAction createFolderAvailability createFolderModalId "New Folder" "plus" "button"
                     }
                 }
             }
@@ -1101,25 +1265,23 @@ module Views =
 
                     let actions =
                         [
-                            if permissions.CreateFolder then
-                                iconModalOpenButton subfolderModalId "New subfolder" "plus"
-                            if permissions.EditFolder then
-                                iconModalOpenButton renameModalId "Rename folder" "edit"
-                            if permissions.DeleteFolder then
-                                iconDeleteForm token $"/_ui/spaces/{sid}/folders/{fid}/delete" "Delete folder" $"Delete folder {folder.Name.Value}?"
+                            iconModalButtonAction createFolderAvailability subfolderModalId "New subfolder" "plus"
+                            iconModalButtonAction editFolderAvailability renameModalId "Rename folder" "edit"
+                            deleteFormAction deleteFolderAvailability token $"/_ui/spaces/{sid}/folders/{fid}/delete" "Delete folder" $"Delete folder {folder.Name.Value}?"
                         ]
 
                     objectCard folder.Name.Value "Folder" $"/spaces/{sid}/{fid}" None actions
-                    modalDialog subfolderModalId $"New subfolder in {folder.Name.Value}" None (createFolderForm token sid (Some fid))
-                    modalDialog renameModalId $"Rename {folder.Name.Value}" None (renameFolderForm token sid fid folder.Name.Value)
+                    if isAllowed createFolderAvailability then
+                        modalDialog subfolderModalId $"New subfolder in {folder.Name.Value}" None (createFolderForm token sid (Some fid))
+                    if isAllowed editFolderAvailability then
+                        modalDialog renameModalId $"Rename {folder.Name.Value}" None (renameFolderForm token sid fid folder.Name.Value)
                 for app in apps do
                     let aid = appId app
                     let actions =
                         [
-                            if permissions.RunApp then iconOnlyLink $"/spaces/{sid}/{aid}/run" "Run app" "play"
-                            if permissions.EditApp then iconOnlyLink $"/spaces/{sid}/{aid}" "Edit app" "edit"
-                            if permissions.DeleteApp then
-                                iconDeleteForm token $"/_ui/spaces/{sid}/apps/{aid}/delete" "Delete app" $"Delete app {app.Name}?"
+                            iconLinkAction runAppAvailability $"/spaces/{sid}/{aid}/run" "Run app" "play"
+                            iconLinkAction editAppAvailability $"/spaces/{sid}/{aid}" "Edit app" "edit"
+                            deleteFormAction deleteAppAvailability token $"/_ui/spaces/{sid}/apps/{aid}/delete" "Delete app" $"Delete app {app.Name}?"
                         ]
 
                     objectCard app.Name "App" $"/spaces/{sid}/{aid}" app.Description actions
@@ -1127,16 +1289,15 @@ module Views =
                     let did = dashboardId dashboard
                     let actions =
                         [
-                            if permissions.RunDashboard then iconOnlyLink $"/spaces/{sid}/{did}/dashboard-run" "Run dashboard" "play"
-                            if permissions.EditDashboard then iconOnlyLink $"/spaces/{sid}/{did}" "Edit dashboard" "edit"
-                            if permissions.DeleteDashboard then
-                                iconDeleteForm token $"/_ui/spaces/{sid}/dashboards/{did}/delete" "Delete dashboard" $"Delete dashboard {dashboard.Name.Value}?"
+                            iconLinkAction runDashboardAvailability $"/spaces/{sid}/{did}/dashboard-run" "Run dashboard" "play"
+                            iconLinkAction editDashboardAvailability $"/spaces/{sid}/{did}" "Edit dashboard" "edit"
+                            deleteFormAction deleteDashboardAvailability token $"/_ui/spaces/{sid}/dashboards/{did}/delete" "Delete dashboard" $"Delete dashboard {dashboard.Name.Value}?"
                         ]
 
                     objectCard dashboard.Name.Value "Dashboard" $"/spaces/{sid}/{did}" None actions
             }
 
-            if permissions.CreateFolder then
+            if isAllowed createFolderAvailability then
                 modalDialog createFolderModalId "New folder" (Some $"Create a folder in {space.Name}.") (createFolderForm token sid None)
 
             if List.isEmpty folders && List.isEmpty apps && List.isEmpty dashboards then
@@ -1152,14 +1313,31 @@ module Views =
         (apps: AppData list)
         (dashboards: DashboardData list)
         (resources: ResourceData list)
-        (permissions: SpacePermissionsDto)
+        (actionContext: SpaceActionContext)
         =
         let sid = spaceId space
         let fid = folderId folder
+        let permissions = actionContext.Permissions
         let renameModalId = $"rename-folder-{fid}"
         let createFolderModalId = $"create-folder-{fid}"
         let createAppModalId = $"create-app-{fid}"
         let createDashboardModalId = $"create-dashboard-{fid}"
+        let createFolderAvailability = spaceActionAvailability actionContext permissions.CreateFolder "create folders"
+        let editFolderAvailability = spaceActionAvailability actionContext permissions.EditFolder "edit folders"
+        let deleteFolderAvailability = spaceActionAvailability actionContext permissions.DeleteFolder "delete folders"
+        let createAppPermissionAvailability = spaceActionAvailability actionContext permissions.CreateApp "create apps"
+        let createAppAvailability =
+            match createAppPermissionAvailability with
+            | ActionAvailability.Denied _ -> createAppPermissionAvailability
+            | ActionAvailability.Allowed ->
+                availableWhen (not (List.isEmpty resources)) "Create a resource before adding apps."
+        let createDashboardAvailability = spaceActionAvailability actionContext permissions.CreateDashboard "create dashboards"
+        let runAppAvailability = spaceActionAvailability actionContext permissions.RunApp "run apps"
+        let editAppAvailability = spaceActionAvailability actionContext permissions.EditApp "edit apps"
+        let deleteAppAvailability = spaceActionAvailability actionContext permissions.DeleteApp "delete apps"
+        let runDashboardAvailability = spaceActionAvailability actionContext permissions.RunDashboard "run dashboards"
+        let editDashboardAvailability = spaceActionAvailability actionContext permissions.EditDashboard "edit dashboards"
+        let deleteDashboardAvailability = spaceActionAvailability actionContext permissions.DeleteDashboard "delete dashboards"
 
         let effectiveFolderPath =
             if folderPath |> List.exists (fun item -> item.Id = folder.Id) then
@@ -1174,16 +1352,11 @@ module Views =
                 div (class' = "toolbar") {
                     div () { cardHeader folder.Name.Value (Some "Folder") }
                     div (class' = "actions") {
-                        if permissions.CreateFolder then
-                            modalOpenButton createFolderModalId "New Folder" "plus" "button button-secondary"
-                        if permissions.CreateApp && not (List.isEmpty resources) then
-                            modalOpenButton createAppModalId "New App" "plus" "button button-secondary"
-                        if permissions.CreateDashboard then
-                            modalOpenButton createDashboardModalId "New Dashboard" "plus" "button button-secondary"
-                        if permissions.EditFolder then
-                            modalOpenButton renameModalId "Rename" "edit" "button button-ghost"
-                        if permissions.DeleteFolder then
-                            iconDeleteForm token $"/_ui/spaces/{sid}/folders/{fid}/delete" "Delete folder" $"Delete folder {folder.Name.Value}?"
+                        modalButtonAction createFolderAvailability createFolderModalId "New Folder" "plus" "button button-secondary"
+                        modalButtonAction createAppAvailability createAppModalId "New App" "plus" "button button-secondary"
+                        modalButtonAction createDashboardAvailability createDashboardModalId "New Dashboard" "plus" "button button-secondary"
+                        modalButtonAction editFolderAvailability renameModalId "Rename" "edit" "button button-ghost"
+                        deleteFormAction deleteFolderAvailability token $"/_ui/spaces/{sid}/folders/{fid}/delete" "Delete folder" $"Delete folder {folder.Name.Value}?"
                     }
                 }
 
@@ -1199,25 +1372,23 @@ module Views =
 
                     let actions =
                         [
-                            if permissions.CreateFolder then
-                                iconModalOpenButton childSubfolderModalId "New subfolder" "plus"
-                            if permissions.EditFolder then
-                                iconModalOpenButton childRenameModalId "Rename folder" "edit"
-                            if permissions.DeleteFolder then
-                                iconDeleteForm token $"/_ui/spaces/{sid}/folders/{childId}/delete" "Delete folder" $"Delete folder {child.Name.Value}?"
+                            iconModalButtonAction createFolderAvailability childSubfolderModalId "New subfolder" "plus"
+                            iconModalButtonAction editFolderAvailability childRenameModalId "Rename folder" "edit"
+                            deleteFormAction deleteFolderAvailability token $"/_ui/spaces/{sid}/folders/{childId}/delete" "Delete folder" $"Delete folder {child.Name.Value}?"
                         ]
 
                     objectCard child.Name.Value "Folder" $"/spaces/{sid}/{childId}" None actions
-                    modalDialog childSubfolderModalId $"New subfolder in {child.Name.Value}" None (createFolderForm token sid (Some childId))
-                    modalDialog childRenameModalId $"Rename {child.Name.Value}" None (renameFolderForm token sid childId child.Name.Value)
+                    if isAllowed createFolderAvailability then
+                        modalDialog childSubfolderModalId $"New subfolder in {child.Name.Value}" None (createFolderForm token sid (Some childId))
+                    if isAllowed editFolderAvailability then
+                        modalDialog childRenameModalId $"Rename {child.Name.Value}" None (renameFolderForm token sid childId child.Name.Value)
                 for app in apps do
                     let aid = appId app
                     let actions =
                         [
-                            if permissions.RunApp then iconOnlyLink $"/spaces/{sid}/{aid}/run" "Run app" "play"
-                            if permissions.EditApp then iconOnlyLink $"/spaces/{sid}/{aid}" "Edit app" "edit"
-                            if permissions.DeleteApp then
-                                iconDeleteForm token $"/_ui/spaces/{sid}/apps/{aid}/delete" "Delete app" $"Delete app {app.Name}?"
+                            iconLinkAction runAppAvailability $"/spaces/{sid}/{aid}/run" "Run app" "play"
+                            iconLinkAction editAppAvailability $"/spaces/{sid}/{aid}" "Edit app" "edit"
+                            deleteFormAction deleteAppAvailability token $"/_ui/spaces/{sid}/apps/{aid}/delete" "Delete app" $"Delete app {app.Name}?"
                         ]
 
                     objectCard app.Name "App" $"/spaces/{sid}/{aid}" app.Description actions
@@ -1225,22 +1396,21 @@ module Views =
                     let did = dashboardId dashboard
                     let actions =
                         [
-                            if permissions.RunDashboard then iconOnlyLink $"/spaces/{sid}/{did}/dashboard-run" "Run dashboard" "play"
-                            if permissions.EditDashboard then iconOnlyLink $"/spaces/{sid}/{did}" "Edit dashboard" "edit"
-                            if permissions.DeleteDashboard then
-                                iconDeleteForm token $"/_ui/spaces/{sid}/dashboards/{did}/delete" "Delete dashboard" $"Delete dashboard {dashboard.Name.Value}?"
+                            iconLinkAction runDashboardAvailability $"/spaces/{sid}/{did}/dashboard-run" "Run dashboard" "play"
+                            iconLinkAction editDashboardAvailability $"/spaces/{sid}/{did}" "Edit dashboard" "edit"
+                            deleteFormAction deleteDashboardAvailability token $"/_ui/spaces/{sid}/dashboards/{did}/delete" "Delete dashboard" $"Delete dashboard {dashboard.Name.Value}?"
                         ]
 
                     objectCard dashboard.Name.Value "Dashboard" $"/spaces/{sid}/{did}" None actions
             }
 
-            if permissions.CreateFolder then
+            if isAllowed createFolderAvailability then
                 modalDialog createFolderModalId "New subfolder" (Some $"Create a folder in {folder.Name.Value}.") (createFolderForm token sid (Some fid))
-            if permissions.CreateApp && not (List.isEmpty resources) then
+            if isAllowed createAppAvailability then
                 modalDialog createAppModalId "New app" (Some $"Create an app in {folder.Name.Value}.") (createAppForm token sid fid resources)
-            if permissions.CreateDashboard then
+            if isAllowed createDashboardAvailability then
                 modalDialog createDashboardModalId "New dashboard" (Some $"Create a dashboard in {folder.Name.Value}.") (createDashboardForm token sid fid)
-            if permissions.EditFolder then
+            if isAllowed editFolderAvailability then
                 modalDialog renameModalId $"Rename {folder.Name.Value}" None (renameFolderForm token sid fid folder.Name.Value)
         }
 
@@ -1431,9 +1601,13 @@ module Views =
                 UiHtml.submitButton submitLabel
         }
 
-    let resourcesPage (token: string) (space: SpaceData) (resources: ResourceData list) (apps: AppData list) (permissions: SpacePermissionsDto) =
+    let resourcesPage (token: string) (space: SpaceData) (resources: ResourceData list) (apps: AppData list) (actionContext: SpaceActionContext) =
         let sid = spaceId space
+        let permissions = actionContext.Permissions
         let createResourceModalId = $"create-resource-{sid}"
+        let createResourceAvailability = spaceActionAvailability actionContext permissions.CreateResource "create resources"
+        let editResourceAvailability = spaceActionAvailability actionContext permissions.EditResource "edit resources"
+        let deleteResourceAvailability = spaceActionAvailability actionContext permissions.DeleteResource "delete resources"
 
         section (class' = "stack") {
             spaceSectionBreadcrumb space "Resources"
@@ -1441,8 +1615,7 @@ module Views =
             section (class' = "card") {
                 div (class' = "toolbar") {
                     div () { cardHeader "Resources" (Some "HTTP and PostgreSQL connections") }
-                    if permissions.CreateResource then
-                        modalOpenButton createResourceModalId "New Resource" "plus" "button"
+                    modalButtonAction createResourceAvailability createResourceModalId "New Resource" "plus" "button"
                 }
             }
 
@@ -1499,14 +1672,12 @@ module Views =
                             }
 
                             div (class' = "object-actions") {
-                                if permissions.EditResource then
-                                    iconModalOpenButton editModalId "Edit resource" "edit"
-                                if permissions.DeleteResource then
-                                    iconDeleteForm token $"/_ui/spaces/{sid}/resources/{rid}/delete" "Delete resource" deleteConfirmText
+                                iconModalButtonAction editResourceAvailability editModalId "Edit resource" "edit"
+                                deleteFormAction deleteResourceAvailability token $"/_ui/spaces/{sid}/resources/{rid}/delete" "Delete resource" deleteConfirmText
                             }
                         }
 
-                        if permissions.EditResource then
+                        if isAllowed editResourceAvailability then
                             modalDialog
                                 editModalId
                                 $"Edit {resource.Name.Value}"
@@ -1514,7 +1685,7 @@ module Views =
                                 (resourceForm token $"/_ui/spaces/{sid}/resources/{rid}/update" "Save resource" (Some resource))
                 }
 
-            if permissions.CreateResource then
+            if isAllowed createResourceAvailability then
                 modalDialog
                     createResourceModalId
                     "Create resource"
@@ -1522,30 +1693,48 @@ module Views =
                     (resourceForm token $"/_ui/spaces/{sid}/resources/create" "Create resource" None)
         }
 
-    let appEditor (token: string) (space: SpaceData) (folderPath: FolderData list) (app: AppData) (resource: ResourceData) =
+    let appEditor
+        (token: string)
+        (space: SpaceData)
+        (folderPath: FolderData list)
+        (app: AppData)
+        (resource: ResourceData)
+        (actionContext: SpaceActionContext)
+        =
         let sid = spaceId space
         let aid = appId app
+        let permissions = actionContext.Permissions
+        let editAppAvailability = spaceActionAvailability actionContext permissions.EditApp "edit apps"
+        let runAppAvailability = spaceActionAvailability actionContext permissions.RunApp "run apps"
         section (class' = "stack") {
             nodeBreadcrumb space folderPath app.Name
             spaceTabs space "builder"
             section (class' = "card") {
                 cardHeader app.Name (Some "App editor")
                 div (class' = "actions") {
-                    a (href = $"/spaces/{sid}/{aid}/run", class' = "button") { "Run app" }
+                    buttonAction runAppAvailability $"/spaces/{sid}/{aid}/run" "Run app" "button"
                     a (href = $"/audit?scope=app&appId={aid}", class' = "button button-ghost") { "Audit" }
                 }
                 div (class' = "form-grid") {
                     let formTag9 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/apps/{aid}/name" []
                     formTag9 {
                         UiHtml.antiforgeryInput token
-                        field "Name" (UiHtml.textInput "Name" app.Name true "App name") None
-                        UiHtml.submitButton "Rename"
+                        formDeniedNote editAppAvailability
+                        let fieldsetTag = fieldsetForAvailability editAppAvailability
+                        fieldsetTag {
+                            field "Name" (UiHtml.textInput "Name" app.Name true "App name") None
+                        }
+                        submitButtonAction editAppAvailability "Rename"
                     }
                     let formTag10 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/apps/{aid}/description" []
                     formTag10 {
                         UiHtml.antiforgeryInput token
-                        field "Description" (UiHtml.textInput "Description" (app.Description |> Option.defaultValue String.Empty) false "What this app does") None
-                        UiHtml.submitButton "Save description"
+                        formDeniedNote editAppAvailability
+                        let fieldsetTag = fieldsetForAvailability editAppAvailability
+                        fieldsetTag {
+                            field "Description" (UiHtml.textInput "Description" (app.Description |> Option.defaultValue String.Empty) false "What this app does") None
+                        }
+                        submitButtonAction editAppAvailability "Save description"
                     }
                 }
                 p () { $"Resource: {resource.Name.Value} ({resource.ResourceKind})" }
@@ -1561,7 +1750,9 @@ module Views =
 
                 formTag11 {
                     UiHtml.antiforgeryInput token
-                    appConfigurationFields (Some resource.ResourceKind) (Some resource) app.Inputs (Some app)
+                    formDeniedNote editAppAvailability
+                    let fieldsetTag = fieldsetForAvailability editAppAvailability
+                    fieldsetTag { appConfigurationFields (Some resource.ResourceKind) (Some resource) app.Inputs (Some app) }
                     div (class' = "form-actions dirty-actions") {
                         let dirtyStatus = UiHtml.attrs [ "class", "dirty-status"; "data-dirty-status", "true" ] (span ())
                         dirtyStatus { "No unsaved changes" }
@@ -1576,15 +1767,19 @@ module Views =
 
                         discardButton { "Discard changes" }
 
-                        let saveButton =
-                            UiHtml.attrs
-                                [ "type", "submit"
-                                  "class", "button"
-                                  "data-dirty-submit", "true"
-                                  "disabled", "disabled" ]
-                                (button ())
+                        match editAppAvailability with
+                        | ActionAvailability.Allowed ->
+                            let saveButton =
+                                UiHtml.attrs
+                                    [ "type", "submit"
+                                      "class", "button"
+                                      "data-dirty-submit", "true"
+                                      "disabled", "disabled" ]
+                                    (button ())
 
-                        saveButton { "Save configuration" }
+                            saveButton { "Save configuration" }
+                        | ActionAvailability.Denied reason ->
+                            disabledAction reason (disabledButton "Save configuration" None "button" reason)
                     }
                 }
             }
@@ -2045,9 +2240,19 @@ module Views =
             runResponseContent run.Response
         }
 
-    let runAppPage (token: string) (space: SpaceData) (folderPath: FolderData list) (app: AppData) (result: RunData option) =
+    let runAppPage
+        (token: string)
+        (space: SpaceData)
+        (folderPath: FolderData list)
+        (app: AppData)
+        (result: RunData option)
+        (actionContext: SpaceActionContext)
+        =
         let sid = spaceId space
         let aid = appId app
+        let permissions = actionContext.Permissions
+        let runAppAvailability = spaceActionAvailability actionContext permissions.RunApp "run apps"
+        let editAppAvailability = spaceActionAvailability actionContext permissions.EditApp "edit apps"
         let submittedValues = result |> Option.map submittedRunInputValues |> Option.defaultValue Map.empty
         let hasInputs = not (List.isEmpty app.Inputs)
         let hasRuntimeInputs = hasInputs || app.UseDynamicJsonBody
@@ -2061,7 +2266,7 @@ module Views =
                 div (class' = "card-header-actions") {
                     cardHeader $"Run {app.Name}" app.Description
                     div (class' = "actions") {
-                        a (href = $"/spaces/{sid}/{aid}", class' = "button button-secondary") { "Edit app" }
+                        buttonAction editAppAvailability $"/spaces/{sid}/{aid}" "Edit app" "button button-secondary"
                         a (href = $"/audit?scope=app&appId={aid}", class' = "button button-ghost") { "Audit" }
                     }
                 }
@@ -2083,30 +2288,39 @@ module Views =
 
                 formTag12 {
                     UiHtml.antiforgeryInput token
+                    formDeniedNote runAppAvailability
+                    let fieldsetTag = fieldsetForAvailability runAppAvailability
+                    fieldsetTag {
+                        if hasInputs then
+                            div (class' = "run-input-grid") {
+                                for appInput in app.Inputs do
+                                    runInputCard submittedValues appInput
+                            }
 
-                    if hasInputs then
-                        div (class' = "run-input-grid") {
-                            for appInput in app.Inputs do
-                                runInputCard submittedValues appInput
-                        }
+                        if app.UseDynamicJsonBody then
+                            section (class' = "run-dynamic-body") {
+                                h3 () { "JSON body parameters" }
+                                p (class' = "muted") { "Add key-value pairs to merge into the request body for this run." }
+                                kvRows "DynamicBody" []
+                            }
 
-                    if app.UseDynamicJsonBody then
-                        section (class' = "run-dynamic-body") {
-                            h3 () { "JSON body parameters" }
-                            p (class' = "muted") { "Add key-value pairs to merge into the request body for this run." }
-                            kvRows "DynamicBody" []
-                        }
-
-                    if not hasRuntimeInputs then
-                        emptyState "No inputs required" "This app can run without runtime parameters."
+                        if not hasRuntimeInputs then
+                            emptyState "No inputs required" "This app can run without runtime parameters."
+                    }
 
                     div (class' = "form-actions run-form-actions") {
-                        let submitButton = UiHtml.attrs [ "type", "submit"; "class", "button run-submit-button" ] (button ())
+                        match runAppAvailability with
+                        | ActionAvailability.Allowed ->
+                            let submitButton = UiHtml.attrs [ "type", "submit"; "class", "button run-submit-button" ] (button ())
 
-                        submitButton {
-                            span (class' = "button-icon") { iconSvg "play" }
-                            if result.IsSome then "Run again" else "Run app"
-                        }
+                            submitButton {
+                                span (class' = "button-icon") { iconSvg "play" }
+                                if result.IsSome then "Run again" else "Run app"
+                            }
+                        | ActionAvailability.Denied reason ->
+                            disabledAction
+                                reason
+                                (disabledButton (if result.IsSome then "Run again" else "Run app") (Some "play") "button run-submit-button" reason)
                     }
                 }
             }
@@ -2127,23 +2341,31 @@ module Views =
         (folderPath: FolderData list)
         (dashboard: DashboardData)
         (apps: AppData list)
+        (actionContext: SpaceActionContext)
         =
         let sid = spaceId space
         let did = dashboardId dashboard
+        let permissions = actionContext.Permissions
+        let editDashboardAvailability = spaceActionAvailability actionContext permissions.EditDashboard "edit dashboards"
+        let runDashboardAvailability = spaceActionAvailability actionContext permissions.RunDashboard "run dashboards"
         section (class' = "stack") {
             nodeBreadcrumb space folderPath dashboard.Name.Value
             spaceTabs space "builder"
             section (class' = "card") {
                 cardHeader dashboard.Name.Value (Some "Dashboard editor")
                 div (class' = "actions") {
-                    a (href = $"/spaces/{sid}/{did}/dashboard-run", class' = "button") { "Run dashboard" }
+                    buttonAction runDashboardAvailability $"/spaces/{sid}/{did}/dashboard-run" "Run dashboard" "button"
                     a (href = $"/audit?scope=dashboard&dashboardId={did}", class' = "button button-ghost") { "Audit" }
                 }
                 let formTag13 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/dashboards/{did}/name" []
                 formTag13 {
                     UiHtml.antiforgeryInput token
-                    field "Name" (UiHtml.textInput "Name" dashboard.Name.Value true "Dashboard name") None
-                    UiHtml.submitButton "Rename"
+                    formDeniedNote editDashboardAvailability
+                    let fieldsetTag = fieldsetForAvailability editDashboardAvailability
+                    fieldsetTag {
+                        field "Name" (UiHtml.textInput "Name" dashboard.Name.Value true "Dashboard name") None
+                    }
+                    submitButtonAction editDashboardAvailability "Rename"
                 }
             }
             section (class' = "card") {
@@ -2151,19 +2373,23 @@ module Views =
                 let formTag14 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/dashboards/{did}/config" []
                 formTag14 {
                     UiHtml.antiforgeryInput token
-                    label (class' = "field") {
-                        span () { "Prepare app" }
-                        select (name = "PrepareAppId") {
-                            option (value = "") { "No prepare app" }
-                            for app in apps do
-                                UiHtml.optionTag (appId app) app.Name (dashboard.PrepareAppId = Some app.Id)
+                    formDeniedNote editDashboardAvailability
+                    let fieldsetTag = fieldsetForAvailability editDashboardAvailability
+                    fieldsetTag {
+                        label (class' = "field") {
+                            span () { "Prepare app" }
+                            select (name = "PrepareAppId") {
+                                option (value = "") { "No prepare app" }
+                                for app in apps do
+                                    UiHtml.optionTag (appId app) app.Name (dashboard.PrepareAppId = Some app.Id)
+                            }
+                        }
+                        label (class' = "field") {
+                            span () { "Configuration" }
+                            UiHtml.textareaInput "Configuration" (UiFormat.tryFormatJson dashboard.Configuration) 16
                         }
                     }
-                    label (class' = "field") {
-                        span () { "Configuration" }
-                        UiHtml.textareaInput "Configuration" (UiFormat.tryFormatJson dashboard.Configuration) 16
-                    }
-                    UiHtml.submitButton "Save dashboard"
+                    submitButtonAction editDashboardAvailability "Save dashboard"
                 }
             }
         }
@@ -2174,9 +2400,18 @@ module Views =
         (folderPath: FolderData list)
         (dashboard: DashboardData)
         (result: string option)
+        (actionContext: SpaceActionContext)
         =
         let sid = spaceId space
         let did = dashboardId dashboard
+        let permissions = actionContext.Permissions
+        let runDashboardPermission = spaceActionAvailability actionContext permissions.RunDashboard "run dashboards"
+        let runAppsPermission = spaceActionAvailability actionContext permissions.RunApp "run apps"
+        let runDashboardAvailability =
+            match runDashboardPermission, runAppsPermission with
+            | ActionAvailability.Allowed, ActionAvailability.Allowed -> ActionAvailability.Allowed
+            | ActionAvailability.Denied reason, _ -> ActionAvailability.Denied reason
+            | _, ActionAvailability.Denied reason -> ActionAvailability.Denied reason
         section (class' = "stack") {
             runBreadcrumb space folderPath $"/spaces/{sid}/{did}" dashboard.Name.Value "Run"
             spaceTabs space "builder"
@@ -2185,9 +2420,13 @@ module Views =
                 let formTag15 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/dashboards/{did}/prepare" []
                 formTag15 {
                     UiHtml.antiforgeryInput token
-                    p () { "Load input support is intentionally plain text for the server-rendered cutover." }
-                    kvRows "LoadInput" []
-                    UiHtml.submitButton "Prepare dashboard"
+                    formDeniedNote runDashboardAvailability
+                    let fieldsetTag = fieldsetForAvailability runDashboardAvailability
+                    fieldsetTag {
+                        p () { "Load input support is intentionally plain text for the server-rendered cutover." }
+                        kvRows "LoadInput" []
+                    }
+                    submitButtonAction runDashboardAvailability "Prepare dashboard"
                 }
             }
             match result with
@@ -2395,7 +2634,7 @@ module Views =
         =
         permissionCheckboxInputWithAttrs formId name labelText isChecked isDisabled []
 
-    let private saveChangedPermissionsButton (formId: string) (labelText: string) =
+    let private saveChangedPermissionsButton (formId: string) (labelText: string) : HtmlElement =
         let tag =
             UiHtml.attrs
                 [ "type", "submit"
@@ -2407,11 +2646,21 @@ module Views =
 
         tag { labelText }
 
-    let private savePermissionsButton (formId: string) =
-        saveChangedPermissionsButton formId "Save permissions"
+    let private saveChangedPermissionsButtonAction (availability: ActionAvailability) (formId: string) (labelText: string) =
+        match availability with
+        | ActionAvailability.Allowed -> saveChangedPermissionsButton formId labelText
+        | ActionAvailability.Denied reason -> disabledAction reason (disabledButton labelText None "button" reason)
 
-    let private dangerSubmitButtonSmall (labelText: string) =
+    let private savePermissionsButtonAction (availability: ActionAvailability) (formId: string) =
+        saveChangedPermissionsButtonAction availability formId "Save permissions"
+
+    let private dangerSubmitButtonSmall (labelText: string) : HtmlElement =
         button (type' = "submit", class' = "button button-danger button-small") { labelText }
+
+    let private dangerSubmitButtonSmallAction (availability: ActionAvailability) (labelText: string) =
+        match availability with
+        | ActionAvailability.Allowed -> dangerSubmitButtonSmall labelText
+        | ActionAvailability.Denied reason -> disabledAction reason (disabledButton labelText None "button button-danger button-small" reason)
 
     let private permissionMatrixHeader (firstColumnLabel: string) (includeActions: bool) =
         thead () {
@@ -2445,7 +2694,7 @@ module Views =
             }
         }
 
-    let private defaultPermissionsMatrix (permissions: SpacePermissionsDto) =
+    let private defaultPermissionsMatrix (permissions: SpacePermissionsDto) (availability: ActionAvailability) =
         div (class' = "table-wrap permissions-matrix-wrap") {
             table (class' = "permissions-table") {
                 permissionMatrixHeader "Applies to" false
@@ -2467,9 +2716,10 @@ module Views =
                                         column.FormField
                                         $"Default {column.Label.ToLowerInvariant()}"
                                         isChecked
-                                        false
-                                        [ "data-permission-checkbox", "true"
-                                          "data-initial-checked", if isChecked then "true" else "false" ]
+                                        (isDenied availability)
+                                        ([ "data-permission-checkbox", "true"
+                                           "data-initial-checked", if isChecked then "true" else "false" ]
+                                         @ (deniedReason availability |> Option.map (fun reason -> [ "title", reason ]) |> Option.defaultValue []))
                                 }
                     }
                 }
@@ -2517,8 +2767,20 @@ module Views =
                 deleteButton { "Delete space" }
             })
 
-    let settingsPage (token: string) (space: SpaceData) (users: UserData list) (members: SpaceMemberPermissionsDto list) (defaultPermissions: SpacePermissionsDto) =
+    let settingsPage
+        (token: string)
+        (space: SpaceData)
+        (users: UserData list)
+        (members: SpaceMemberPermissionsDto list)
+        (defaultPermissions: SpacePermissionsDto)
+        (actionContext: SpaceActionContext)
+        =
         let sid = spaceId space
+        let renameSpaceAvailability = spaceAdminAvailability actionContext "rename spaces"
+        let changeModeratorAvailability = spaceAdminAvailability actionContext "change space moderators"
+        let manageMembersAvailability = spaceAdminAvailability actionContext "manage space members"
+        let updatePermissionsAvailability = spaceAdminAvailability actionContext "update member permissions"
+        let deleteSpaceAvailability = orgAdminAvailability actionContext.IsOrgAdmin actionContext.OrgAdminDisplayNames "delete spaces"
 
         let sortedMembers =
             members
@@ -2535,43 +2797,56 @@ module Views =
                     let formTag16 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/name" []
                     formTag16 {
                         UiHtml.antiforgeryInput token
-                        field "Space name" (UiHtml.textInput "Name" space.Name true "Space name") None
-                        UiHtml.submitButton "Rename space"
+                        formDeniedNote renameSpaceAvailability
+                        let fieldsetTag = fieldsetForAvailability renameSpaceAvailability
+                        fieldsetTag {
+                            field "Space name" (UiHtml.textInput "Name" space.Name true "Space name") None
+                        }
+                        submitButtonAction renameSpaceAvailability "Rename space"
                     }
                     let formTag17 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/moderator" []
                     formTag17 {
                         UiHtml.antiforgeryInput token
-                        label (class' = "field") {
-                            span () { "Moderator" }
-                            let selectTag3 = UiHtml.attrs [ "name", "NewModeratorUserId"; "required", "required" ] (select ())
-                            selectTag3 {
-                                for user in users do
-                                    UiHtml.optionTag (userId user) ($"{user.Name} ({user.Email})") (user.Id = space.ModeratorUserId)
+                        formDeniedNote changeModeratorAvailability
+                        let fieldsetTag = fieldsetForAvailability changeModeratorAvailability
+                        fieldsetTag {
+                            label (class' = "field") {
+                                span () { "Moderator" }
+                                let selectTag3 = UiHtml.attrs [ "name", "NewModeratorUserId"; "required", "required" ] (select ())
+                                selectTag3 {
+                                    for user in users do
+                                        UiHtml.optionTag (userId user) ($"{user.Name} ({user.Email})") (user.Id = space.ModeratorUserId)
+                                }
                             }
                         }
-                        UiHtml.submitButton "Change moderator"
+                        submitButtonAction changeModeratorAvailability "Change moderator"
                     }
                     let formTag18 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/members/add" []
                     formTag18 {
                         UiHtml.antiforgeryInput token
-                        label (class' = "field") {
-                            span () { "Add member" }
-                            let selectTag4 = UiHtml.attrs [ "name", "UserId"; "required", "required" ] (select ())
-                            selectTag4 {
-                                option (value = "") { "Select user" }
-                                for user in users do
-                                    option (value = userId user) { $"{user.Name} ({user.Email})" }
+                        formDeniedNote manageMembersAvailability
+                        let fieldsetTag = fieldsetForAvailability manageMembersAvailability
+                        fieldsetTag {
+                            label (class' = "field") {
+                                span () { "Add member" }
+                                let selectTag4 = UiHtml.attrs [ "name", "UserId"; "required", "required" ] (select ())
+                                selectTag4 {
+                                    option (value = "") { "Select user" }
+                                    for user in users do
+                                        option (value = userId user) { $"{user.Name} ({user.Email})" }
+                                }
                             }
                         }
-                        UiHtml.submitButton "Add member"
+                        submitButtonAction manageMembersAvailability "Add member"
                     }
                 }
 
                 section (class' = "card danger-zone") {
                     cardHeader "Danger zone" (Some "Deleting a space also removes authorization relationships.")
                     let deleteModalId = $"delete-space-{sid}"
-                    modalOpenButton deleteModalId "Delete space" "trash" "button button-danger"
-                    deleteSpaceConfirmationModal token space
+                    modalButtonAction deleteSpaceAvailability deleteModalId "Delete space" "trash" "button button-danger"
+                    if isAllowed deleteSpaceAvailability then
+                        deleteSpaceConfirmationModal token space
                 }
             }
 
@@ -2584,8 +2859,10 @@ module Views =
                     }
 
                     if not (List.isEmpty editableMembers) then
-                        savePermissionsButton memberPermissionsFormId
+                        savePermissionsButtonAction updatePermissionsAvailability memberPermissionsFormId
                 }
+
+                formDeniedNote updatePermissionsAvailability
 
                 if List.isEmpty sortedMembers then
                     emptyState "No members" "Add members to this space before assigning permissions."
@@ -2647,21 +2924,35 @@ module Views =
                                                             elif isInherited then
                                                                 []
                                                             else
-                                                                [ "data-permission-checkbox", "true"
-                                                                  "data-initial-checked", if isChecked then "true" else "false" ]
+                                                                let baseAttrs =
+                                                                    if isAllowed updatePermissionsAvailability then
+                                                                        [ "data-permission-checkbox", "true"
+                                                                          "data-initial-checked", if isChecked then "true" else "false" ]
+                                                                    else
+                                                                        []
+
+                                                                baseAttrs
+                                                                @ (deniedReason updatePermissionsAvailability
+                                                                   |> Option.map (fun reason -> [ "title", reason ])
+                                                                   |> Option.defaultValue [])
 
                                                         let cellAttrs =
                                                             [ "class", groupStartClass "permission-cell" columnIndex ]
-                                                            @ if spaceMember.IsModerator then [ "title", moderatorInheritedHelp ] else []
+                                                            @ if spaceMember.IsModerator then
+                                                                  [ "title", moderatorInheritedHelp ]
+                                                              else
+                                                                  deniedReason updatePermissionsAvailability
+                                                                  |> Option.map (fun reason -> [ "title", reason ])
+                                                                  |> Option.defaultValue []
 
                                                         let cell = UiHtml.attrs cellAttrs (td ())
                                                         cell {
                                                             permissionCheckboxInputWithAttrs
-                                                                (if isInherited then None else Some memberPermissionsFormId)
+                                                                (if isInherited || isDenied updatePermissionsAvailability then None else Some memberPermissionsFormId)
                                                                 checkboxName
                                                                 $"{column.Label} for {displayName}"
                                                                 isChecked
-                                                                isInherited
+                                                                (isInherited || isDenied updatePermissionsAvailability)
                                                                 checkboxAttrs
                                                         }
 
@@ -2683,7 +2974,7 @@ module Views =
                                                         formTag21 {
                                                             UiHtml.antiforgeryInput token
                                                             UiHtml.hidden "UserId" spaceMember.UserId
-                                                            dangerSubmitButtonSmall "Remove"
+                                                            dangerSubmitButtonSmallAction manageMembersAvailability "Remove"
                                                         }
                                                 }
                                             }
@@ -2710,8 +3001,9 @@ module Views =
 
                 formTag22 {
                     UiHtml.antiforgeryInput token
-                    defaultPermissionsMatrix defaultPermissions
-                    saveChangedPermissionsButton defaultPermissionsFormId "Save default permissions"
+                    formDeniedNote updatePermissionsAvailability
+                    defaultPermissionsMatrix defaultPermissions updatePermissionsAvailability
+                    saveChangedPermissionsButtonAction updatePermissionsAvailability defaultPermissionsFormId "Save default permissions"
                 }
             }
         }
@@ -2942,8 +3234,19 @@ module Views =
             }
         }
 
-    let trashPage (token: string) (space: SpaceData) (apps: ValidatedApp list) (folders: ValidatedFolder list) (resources: ValidatedResource list) =
+    let trashPage
+        (token: string)
+        (space: SpaceData)
+        (apps: ValidatedApp list)
+        (folders: ValidatedFolder list)
+        (resources: ValidatedResource list)
+        (actionContext: SpaceActionContext)
+        =
         let sid = spaceId space
+        let permissions = actionContext.Permissions
+        let restoreAppAvailability = spaceActionAvailability actionContext permissions.DeleteApp "restore deleted apps"
+        let restoreFolderAvailability = spaceActionAvailability actionContext permissions.DeleteFolder "restore deleted folders"
+        let restoreResourceAvailability = spaceActionAvailability actionContext permissions.DeleteResource "restore deleted resources"
         section (class' = "stack") {
             spaceSectionBreadcrumb space "Trash"
             spaceTabs space "trash"
@@ -2962,7 +3265,7 @@ module Views =
                                 let formTag21 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/trash/apps/{app.State.Id.Value}/restore" []
                                 formTag21 {
                                     UiHtml.antiforgeryInput token
-                                    UiHtml.submitButton "Restore"
+                                    submitButtonAction restoreAppAvailability "Restore"
                                 }
                             }
                         for folder in folders do
@@ -2974,7 +3277,7 @@ module Views =
                                 let formTag22 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/trash/folders/{folder.State.Id.Value}/restore" []
                                 formTag22 {
                                     UiHtml.antiforgeryInput token
-                                    UiHtml.submitButton "Restore"
+                                    submitButtonAction restoreFolderAvailability "Restore"
                                 }
                             }
                         for resource in resources do
@@ -2986,7 +3289,7 @@ module Views =
                                 let formTag23 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/trash/resources/{resource.State.Id.Value}/restore" []
                                 formTag23 {
                                     UiHtml.antiforgeryInput token
-                                    UiHtml.submitButton "Restore"
+                                    submitButtonAction restoreResourceAvailability "Restore"
                                 }
                             }
                     }

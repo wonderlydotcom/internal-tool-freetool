@@ -1,5 +1,6 @@
 namespace Freetool.Api.Ui
 
+open Freetool.Application.DTOs
 open Freetool.Domain.Entities
 
 [<RequireQualifiedAccess>]
@@ -19,6 +20,19 @@ type LayoutModel = {
     DevUsers: UserData list
     ReturnUrl: string
     Flash: FlashMessage option
+}
+
+[<RequireQualifiedAccess>]
+type ActionAvailability =
+    | Allowed
+    | Denied of reason: string
+
+type SpaceActionContext = {
+    Permissions: SpacePermissionsDto
+    ModeratorDisplayName: string option
+    OrgAdminDisplayNames: string list
+    IsOrgAdmin: bool
+    IsSpaceModerator: bool
 }
 
 module UiModels =
