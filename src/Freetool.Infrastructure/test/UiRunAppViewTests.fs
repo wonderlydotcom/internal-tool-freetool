@@ -97,6 +97,23 @@ module UiRunAppViewTests =
         InvitedAt = None
     }
 
+    let private sampleMember user isModerator isOrgAdmin = {
+        UserId = user.Id.Value.ToString()
+        UserName = user.Name
+        UserEmail = user.Email
+        ProfilePicUrl = user.ProfilePicUrl
+        IsModerator = isModerator
+        IsOrgAdmin = isOrgAdmin
+        Permissions = allPermissions
+    }
+
+    let private htmlSliceFromTo (startText: string) (endText: string) (html: string) =
+        let startIndex = html.IndexOf(startText, StringComparison.Ordinal)
+        Assert.True(startIndex >= 0, $"Expected HTML to contain '{startText}'.")
+        let endIndex = html.IndexOf(endText, startIndex, StringComparison.Ordinal)
+        Assert.True(endIndex >= 0, $"Expected HTML after '{startText}' to contain '{endText}'.")
+        html.Substring(startIndex, endIndex - startIndex)
+
     [<Fact>]
     let ``Run app page renders configured choice inputs as selects`` () =
         let tableType = InputType.MultiText(100, [ "users"; "subscriptions" ]) |> unwrap
@@ -263,3 +280,79 @@ module UiRunAppViewTests =
         Assert.Contains("<fieldset class=\"form-fieldset\" disabled=\"disabled\">", html)
         Assert.Contains("Only organization administrators can delete spaces. Ask Org Admin", html)
         Assert.Contains("Delete space", html)
+
+    [<Fact>]
+    let ``Settings page add member dropdown excludes users already in the space`` () =
+        let moderatorId = UserId.NewId()
+        let memberId = UserId.NewId()
+        let candidateId = UserId.NewId()
+
+        let space = {
+            (sampleSpace ()) with
+                ModeratorUserId = moderatorId
+                MemberIds = [ memberId ]
+        }
+
+        let moderator = sampleUser moderatorId "Moderator" "moderator@test.local"
+        let existingMember = sampleUser memberId "Member" "member@test.local"
+        let candidate = sampleUser candidateId "Candidate" "candidate@test.local"
+
+        let managerContext = {
+            actionContext with
+                IsSpaceModerator = true
+        }
+
+        let html =
+            Views.settingsPage
+                "token"
+                space
+                [ moderator; existingMember; candidate ]
+                [ sampleMember moderator true false; sampleMember existingMember false false ]
+                allPermissions
+                managerContext
+            |> Render.toString
+
+        let addMemberSelect =
+            htmlSliceFromTo "data-add-member-select=\"true\"" "</select>" html
+
+        Assert.Contains($"value=\"{candidateId.Value}\"", addMemberSelect)
+        Assert.Contains("Candidate (candidate@test.local)", addMemberSelect)
+        Assert.DoesNotContain($"value=\"{memberId.Value}\"", addMemberSelect)
+        Assert.DoesNotContain($"value=\"{moderatorId.Value}\"", addMemberSelect)
+        Assert.Contains("data-add-member-submit=\"true\" disabled=\"disabled\"", html)
+
+    [<Fact>]
+    let ``Settings page add member form is disabled when no users can be added`` () =
+        let moderatorId = UserId.NewId()
+        let memberId = UserId.NewId()
+
+        let space = {
+            (sampleSpace ()) with
+                ModeratorUserId = moderatorId
+                MemberIds = [ memberId ]
+        }
+
+        let moderator = sampleUser moderatorId "Moderator" "moderator@test.local"
+        let existingMember = sampleUser memberId "Member" "member@test.local"
+
+        let managerContext = {
+            actionContext with
+                IsSpaceModerator = true
+        }
+
+        let html =
+            Views.settingsPage
+                "token"
+                space
+                [ moderator; existingMember ]
+                [ sampleMember moderator true false; sampleMember existingMember false false ]
+                allPermissions
+                managerContext
+            |> Render.toString
+
+        let addMemberSelect =
+            htmlSliceFromTo "data-add-member-select=\"true\"" "</select>" html
+
+        Assert.Contains("disabled=\"disabled\"", addMemberSelect)
+        Assert.Contains("No users available to add", addMemberSelect)
+        Assert.Contains("data-add-member-submit=\"true\" disabled=\"disabled\"", html)

@@ -2903,6 +2903,14 @@ module Views =
 
         let editableMembers = sortedMembers |> List.filter (inheritsAllPermissions >> not)
 
+        let existingMemberIds =
+            space.ModeratorUserId.Value.ToString()
+            :: (space.MemberIds |> List.map (fun memberId -> memberId.Value.ToString()))
+            |> Set.ofList
+
+        let addableUsers =
+            users |> List.filter (fun user -> not (Set.contains (userId user) existingMemberIds))
+
         section (class' = "stack") {
             spaceSectionBreadcrumb space "Settings"
             spaceTabs space "settings"
@@ -2932,7 +2940,11 @@ module Views =
                             }
                         }
                     }
-                    let formTag18 = UiHtml.enhancedPostForm $"/_ui/spaces/{sid}/members/add" [ "class", "settings-form" ]
+                    let formTag18 =
+                        UiHtml.enhancedPostForm
+                            $"/_ui/spaces/{sid}/members/add"
+                            [ "class", "settings-form"; "data-add-member-form", "true" ]
+
                     formTag18 {
                         UiHtml.antiforgeryInput token
                         formDeniedNote manageMembersAvailability
@@ -2940,15 +2952,42 @@ module Views =
                         fieldsetTag {
                             label (class' = "field") {
                                 span () { "Add member" }
-                                let selectTag4 = UiHtml.attrs [ "name", "UserId"; "required", "required" ] (select ())
+
+                                let selectTag4 =
+                                    UiHtml.attrs
+                                        ([ "name", "UserId"
+                                           "required", "required"
+                                           "data-add-member-select", "true" ]
+                                         @ UiHtml.disabledAttr (List.isEmpty addableUsers))
+                                        (select ())
+
                                 selectTag4 {
-                                    option (value = "") { "Select user" }
-                                    for user in users do
+                                    option (value = "") {
+                                        if List.isEmpty addableUsers then
+                                            "No users available to add"
+                                        else
+                                            "Select user"
+                                    }
+
+                                    for user in addableUsers do
                                         option (value = userId user) { $"{user.Name} ({user.Email})" }
                                 }
                             }
                         }
-                        submitButtonAction manageMembersAvailability "Add member"
+
+                        match manageMembersAvailability with
+                        | ActionAvailability.Allowed ->
+                            let addMemberButton =
+                                UiHtml.attrs
+                                    [ "type", "submit"
+                                      "class", "button"
+                                      "data-add-member-submit", "true"
+                                      "disabled", "disabled" ]
+                                    (button ())
+
+                            addMemberButton { "Add member" }
+                        | ActionAvailability.Denied reason ->
+                            disabledAction reason (disabledButton "Add member" None "button" reason)
                     }
                 }
 

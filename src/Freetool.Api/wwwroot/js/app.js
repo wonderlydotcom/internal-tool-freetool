@@ -42,6 +42,25 @@
       .forEach(updateTypedConfirmState);
   }
 
+  function updateAddMemberSubmitState(form) {
+    const select = form.querySelector("[data-add-member-select]");
+    const submitButton = form.querySelector("[data-add-member-submit]");
+    if (!(select instanceof HTMLSelectElement)) return;
+    if (!(submitButton instanceof HTMLButtonElement)) return;
+
+    submitButton.disabled = select.disabled || select.value === "";
+  }
+
+  function initializeAddMemberForms(root = document) {
+    const forms = [];
+    if (root instanceof Element && root.matches("[data-add-member-form]")) {
+      forms.push(root);
+    }
+    root.querySelectorAll?.("[data-add-member-form]").forEach((form) => forms.push(form));
+
+    forms.forEach(updateAddMemberSubmitState);
+  }
+
   function editableNameInput(form) {
     const input = form.querySelector("[data-editable-name-input]");
     return input instanceof HTMLInputElement ? input : null;
@@ -1177,6 +1196,13 @@
       return;
     }
 
+    const addMemberSelect = closest(event.target, "[data-add-member-select]");
+    if (addMemberSelect) {
+      const form = addMemberSelect.closest("[data-add-member-form]");
+      if (form) updateAddMemberSubmitState(form);
+      return;
+    }
+
     const autoSubmitControl = closest(event.target, "[data-auto-submit-on-change]");
     if (autoSubmitControl instanceof HTMLSelectElement || autoSubmitControl instanceof HTMLInputElement) {
       requestSubmitOnChange(autoSubmitControl);
@@ -1393,6 +1419,7 @@
 
   initializePermissionsMatrices();
   initializeTypedConfirmForms();
+  initializeAddMemberForms();
   initializeEditableNameForms();
   initializeAppConfigForms();
   initializeResourceForms();
@@ -1403,6 +1430,7 @@
     mutations.forEach((mutation) => {
       mutation.addedNodes.forEach((node) => {
         if (node instanceof Element) {
+          initializeAddMemberForms(node);
           initializeEditableNameForms(node);
           initializeAppConfigForms(node);
           initializeResourceForms(node);
