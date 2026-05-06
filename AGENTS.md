@@ -408,6 +408,7 @@ The frontend uses **Biome** for linting and formatting - a unified, high-perform
 
 Always run `./scripts/signoff-pr.sh` from the current branch with no arguments before requesting review or finalizing a pull request.
 
+- PR titles must follow Conventional Commits with an uppercase description, e.g. `feat: Add customer export` or `fix(auth): Refresh expired tokens`.
 - Run it even if the pull request already exists; the script handles both PR updates and the required CI signoff.
 - If the script reports issues, fix them and re-run `./scripts/signoff-pr.sh` until it succeeds.
 - Do not bypass this workflow with manual GitHub signoff commands or alternate PR/signoff commands.

@@ -344,6 +344,42 @@ ensure_pull_request() {
   gh pr create --head "$branch" --base "$DEFAULT_BRANCH" --fill
 }
 
+validate_pull_request_title() {
+  local branch title pattern
+  branch="$(git branch --show-current)"
+  title="$(gh pr view "$branch" --json title --jq '.title' 2>/dev/null || true)"
+
+  if [ -z "$title" ] || [ "$title" = "null" ]; then
+    echo "Could not resolve current pull request title for branch '$branch'." >&2
+    exit 1
+  fi
+
+  pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9][a-z0-9._/-]*\))?!?: [A-Z].*$'
+
+  if [[ "$title" =~ $pattern ]]; then
+    return
+  fi
+
+  cat >&2 <<MSG
+Pull request title must follow Conventional Commits:
+  <type>[optional scope][!]: <Description>
+
+Allowed types:
+  feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
+
+Examples:
+  feat: Add customer export
+  fix(auth): Refresh expired tokens
+  chore(deps)!: Upgrade runtime
+
+Current title:
+  $title
+
+Rename the PR and rerun ./scripts/signoff-pr.sh.
+MSG
+  exit 1
+}
+
 export_pi_pr_telemetry() {
   if [ ! -f "$ROOT_DIR/scripts/pi-pr-telemetry.mjs" ]; then
     echo "Pi PR telemetry exporter not found; skipping telemetry summary."
@@ -575,6 +611,7 @@ fi
 ensure_tracked_status_unchanged "$VALIDATION_TRACKED_STATUS"
 ensure_upstream_tracking
 ensure_pull_request
+validate_pull_request_title
 run_step "Exporting Pi PR telemetry summary" export_pi_pr_telemetry
 
 echo "Signing off PR with gh-signoff..."
