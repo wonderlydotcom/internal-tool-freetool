@@ -722,7 +722,7 @@ For local development without Google IAP, Freetool provides a **Dev Mode** that 
 | **Authentication** | Google IAP identity headers | `X-Dev-User-Id` header |
 | **User identity** | Automatic from IAP | Manual selection via UI dropdown |
 | **Backend port** | 5001 | 5002 |
-| **Frontend port** | (served by backend) | 8081 |
+| **UI** | Served by backend | Served by backend |
 | **Database** | `freetool-db` volume | `freetool-dev-db` volume (isolated) |
 | **Docker command** | `docker-compose up` | `docker-compose -f docker-compose.dev.yml up` |
 
@@ -735,12 +735,11 @@ docker-compose -f docker-compose.dev.yml up --build
 ```
 
 This starts:
-- **Frontend** at http://localhost:8081
-- **Backend API** at http://localhost:5002
+- **Freetool app** at http://localhost:5002
 - **OpenFGA** at http://localhost:8090
 - **Aspire Dashboard** (OTEL) at http://localhost:18888
 
-Open http://localhost:8081 and you'll see a yellow **"DEVELOPMENT MODE"** banner at the top of the page and a user switcher dropdown in the header.
+Open http://localhost:5002 and you'll see a yellow **"DEVELOPMENT MODE"** banner at the top of the page and a user switcher dropdown in the header.
 
 ### Seeded Test Users
 

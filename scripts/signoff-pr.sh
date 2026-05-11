@@ -591,7 +591,7 @@ else
   echo "No Python scripts changed; skipping Python validation."
 fi
 
-echo "No generated frontend API types remain; skipping frontend contract validation."
+echo "No generated browser API contract is checked in; skipping contract validation."
 
 if ! command -v gh >/dev/null 2>&1; then
   echo "GitHub CLI ('gh') is required but was not found in PATH."

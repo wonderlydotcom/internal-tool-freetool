@@ -257,10 +257,9 @@ dotnet build Freetool.sln -c Release
 dotnet test Freetool.sln
 ```
 
-For frontend-facing API shape changes, regenerate and verify types:
+For API shape changes, refresh and review the OpenAPI contract:
 
 ```bash
 # From repo root, with API running
 curl http://localhost:5001/swagger/v1/swagger.json > openapi.spec.json
-cd www && npm run generate-api-types && npm run lint && npm test
 ```
