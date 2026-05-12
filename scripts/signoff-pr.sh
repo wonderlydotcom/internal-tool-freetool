@@ -68,21 +68,12 @@ ensure_tracked_status_unchanged() {
 
 resolve_solution_file() {
   local solutions=()
-  local solution
-
   mapfile -t solutions < <(find "$ROOT_DIR" -maxdepth 1 -name '*.sln' -print | sed 's#^.*/##' | sort)
 
   if [ "${#solutions[@]}" -eq 0 ]; then
     echo "No solution file found at the repository root."
     exit 1
   fi
-
-  for solution in "${solutions[@]}"; do
-    if [[ "$solution" != *.Production.sln ]]; then
-      echo "$solution"
-      return
-    fi
-  done
 
   echo "${solutions[0]}"
 }
