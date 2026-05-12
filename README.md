@@ -512,7 +512,7 @@ OPENFGA_STORE_ID=01HVMMBCMGZNT3SED4Z17ECXCA
 
 ### 🐳 Docker Setup
 
-OpenFGA runs as a containerized service in `docker-compose.yml`:
+OpenFGA runs as a containerized service in `docker-compose.dev.yml`:
 
 ```yaml
 openfga-migrate:
@@ -671,7 +671,7 @@ This project uses **SQLite** with **DBUp** for database migrations. SQLite is a 
 
 4. **Start the application**
    ```bash
-   docker-compose up --build
+   docker compose -f docker-compose.dev.yml up --build
    ```
 
    **The database will be created automatically on first run!** The application uses DBUp to:
@@ -680,15 +680,15 @@ This project uses **SQLite** with **DBUp** for database migrations. SQLite is a 
    - Display migration progress in the console
 
 5. **Access the app**
-   - Hosted UI/API: http://localhost:5001
-   - OpenAPI UI: http://localhost:5001/openapi
+   - Hosted UI/API: http://localhost:5002
+   - OpenAPI UI: http://localhost:5002/openapi
    - OTEL traces: http://localhost:18888/
 
 ### Quick Test
 
 Once the application is running, you can test the User API:
 
-1. **Open OpenAPI UI** at http://localhost:5001/openapi
+1. **Open OpenAPI UI** at http://localhost:5002/openapi
 2. **Create a user** using the `POST /user` endpoint:
    ```json
    {
@@ -721,17 +721,17 @@ For local development without Google IAP, Freetool provides a **Dev Mode** that 
 |--------|----------------|----------|
 | **Authentication** | Google IAP identity headers | `X-Dev-User-Id` header |
 | **User identity** | Automatic from IAP | Manual selection via UI dropdown |
-| **Backend port** | 5001 | 5002 |
+| **Backend port** | Platform-managed | 5002 |
 | **UI** | Served by backend | Served by backend |
-| **Database** | `freetool-db` volume | `freetool-dev-db` volume (isolated) |
-| **Docker command** | `docker-compose up` | `docker-compose -f docker-compose.dev.yml up` |
+| **Database** | Platform-managed | `freetool-dev-db` volume (isolated) |
+| **Docker command** | N/A | `docker compose -f docker-compose.dev.yml up` |
 
 ### Starting Dev Mode
 
 From the project root, run:
 
 ```bash
-docker-compose -f docker-compose.dev.yml up --build
+docker compose -f docker-compose.dev.yml up --build
 ```
 
 This starts:

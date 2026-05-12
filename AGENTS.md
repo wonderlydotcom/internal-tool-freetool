@@ -55,18 +55,18 @@ The UI is served by the ASP.NET Core host from `src/Freetool.Api/src/Ui` and `sr
 ### Docker
 ```bash
 # Start all services (API, OpenFGA, Aspire Dashboard)
-docker-compose up --build
+docker compose -f docker-compose.dev.yml up --build
 
 # Start specific service
-docker-compose up --build freetool-api
+docker compose -f docker-compose.dev.yml up --build freetool-api
 
 # View logs
-docker-compose logs -f freetool-api
+docker compose -f docker-compose.dev.yml logs -f freetool-api
 ```
 
 **Service URLs:**
-- API: http://localhost:5001
-- OpenAPI UI: http://localhost:5001/openapi
+- API: http://localhost:5002
+- OpenAPI UI: http://localhost:5002/openapi
 - OTEL/Aspire Dashboard: http://localhost:18888
 - OpenFGA: http://localhost:8090
 - OpenFGA Playground: http://localhost:3030
@@ -427,8 +427,8 @@ Freetool is designed to run behind **Google Cloud IAP** at the root path (`/`).
    - Example: `|| context.Type = typeof<NewEntityId>`
 
 7. **Refresh OpenAPI contract when API routes or transport DTOs change:**
-   - Start backend: `docker compose up -d`
-   - Export spec: `curl http://localhost:5001/openapi/v1.json > openapi.spec.json`
+   - Start backend: `docker compose -f docker-compose.dev.yml up -d`
+   - Export spec: `curl http://localhost:5002/openapi/v1.json > openapi.spec.json`
    - Review and commit the updated `openapi.spec.json` when it changes.
 
 ### Adding a New Command to Existing Entity
@@ -486,7 +486,7 @@ When adding properties to entities, you MUST configure them in `OnModelCreating`
 7. **Parse Error in Audit Log**: Event schema changed but old events in DB have different structure - wipe DB during development or add fallback deserialization
 
 ### UI/API Contract
-8. **OpenAPI Drift**: If API calls or generated docs look stale, refresh the contract with `docker compose up -d && curl http://localhost:5001/openapi/v1.json > openapi.spec.json` and review the diff.
+8. **OpenAPI Drift**: If API calls or generated docs look stale, refresh the contract with `docker compose -f docker-compose.dev.yml up -d && curl http://localhost:5002/openapi/v1.json > openapi.spec.json` and review the diff.
 9. **F# Discriminated Union JSON Format**: When sending F# DUs to the backend, use `{ case: "CaseName" }` format (or `{ case: "CaseName", fields: [...] }` for DUs with parameters). The OpenAPI spec shows the serialization format, but deserialization requires the `case` format.
 
 ## Type Safety Guidelines
@@ -666,8 +666,8 @@ Freetool is designed to run behind **Google Cloud IAP** at the root path (`/`).
    - Example: `|| context.Type = typeof<NewEntityId>`
 
 7. **Refresh OpenAPI contract when API routes or transport DTOs change:**
-   - Start backend: `docker compose up -d`
-   - Export spec: `curl http://localhost:5001/openapi/v1.json > openapi.spec.json`
+   - Start backend: `docker compose -f docker-compose.dev.yml up -d`
+   - Export spec: `curl http://localhost:5002/openapi/v1.json > openapi.spec.json`
    - Review and commit the updated `openapi.spec.json` when it changes.
 
 ### Adding a New Command to Existing Entity
@@ -725,7 +725,7 @@ When adding properties to entities, you MUST configure them in `OnModelCreating`
 7. **Parse Error in Audit Log**: Event schema changed but old events in DB have different structure - wipe DB during development or add fallback deserialization
 
 ### UI/API Contract
-8. **OpenAPI Drift**: If API calls or generated docs look stale, refresh the contract with `docker compose up -d && curl http://localhost:5001/openapi/v1.json > openapi.spec.json` and review the diff.
+8. **OpenAPI Drift**: If API calls or generated docs look stale, refresh the contract with `docker compose -f docker-compose.dev.yml up -d && curl http://localhost:5002/openapi/v1.json > openapi.spec.json` and review the diff.
 9. **F# Discriminated Union JSON Format**: When sending F# DUs to the backend, use `{ case: "CaseName" }` format (or `{ case: "CaseName", fields: [...] }` for DUs with parameters). The OpenAPI spec shows the serialization format, but deserialization requires the `case` format.
 
 ## Type Safety Guidelines
