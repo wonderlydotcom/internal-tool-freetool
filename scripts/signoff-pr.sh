@@ -108,7 +108,7 @@ resolve_docker_compose_cmd() {
 }
 
 repo_uses_openfga() {
-  grep -qi 'openfga' docker-compose.yml docker-compose.yaml docker-compose.dev.yml 2>/dev/null
+  grep -qi 'openfga' docker-compose.dev.yml 2>/dev/null
 }
 
 ensure_openfga_ready() {
@@ -128,12 +128,12 @@ ensure_openfga_ready() {
   fi
 
   resolve_docker_compose_cmd
-  "${DOCKER_COMPOSE_CMD[@]}" up -d openfga
+  "${DOCKER_COMPOSE_CMD[@]}" -f docker-compose.dev.yml up -d openfga
 
   until curl -fsS "$readiness_url" >/dev/null 2>&1; do
     if [ "$attempt" -ge "$max_attempts" ]; then
       echo "OpenFGA did not become ready at $readiness_url after $((max_attempts * 2)) seconds."
-      "${DOCKER_COMPOSE_CMD[@]}" ps openfga || true
+      "${DOCKER_COMPOSE_CMD[@]}" -f docker-compose.dev.yml ps openfga || true
       exit 1
     fi
 
@@ -481,6 +481,7 @@ CHANGED_WORKFLOW_FILES=()
 mapfile -t CHANGED_WORKFLOW_FILES < <(
   printf '%s\n' "${CHANGED_FILES[@]}" \
     | grep -E '^\.github/workflows/[^[:space:]]+\.ya?ml$' \
+    | while IFS= read -r path; do [ -f "$path" ] && printf '%s\n' "$path"; done \
     || true
 )
 
@@ -489,17 +490,24 @@ mapfile -t CHANGED_YAML_FILES < <(
   printf '%s\n' "${CHANGED_FILES[@]}" \
     | grep -E '^[^[:space:]]+\.ya?ml$' \
     | grep -Ev '^\.github/workflows/' \
+    | while IFS= read -r path; do [ -f "$path" ] && printf '%s\n' "$path"; done \
     || true
 )
 
 CHANGED_SHELL_FILES=()
 mapfile -t CHANGED_SHELL_FILES < <(
-  printf '%s\n' "${CHANGED_FILES[@]}" | grep -E '^[^[:space:]]+\.sh$' || true
+  printf '%s\n' "${CHANGED_FILES[@]}" \
+    | grep -E '^[^[:space:]]+\.sh$' \
+    | while IFS= read -r path; do [ -f "$path" ] && printf '%s\n' "$path"; done \
+    || true
 )
 
 CHANGED_PYTHON_FILES=()
 mapfile -t CHANGED_PYTHON_FILES < <(
-  printf '%s\n' "${CHANGED_FILES[@]}" | grep -E '^[^[:space:]]+\.py$' || true
+  printf '%s\n' "${CHANGED_FILES[@]}" \
+    | grep -E '^[^[:space:]]+\.py$' \
+    | while IFS= read -r path; do [ -f "$path" ] && printf '%s\n' "$path"; done \
+    || true
 )
 
 if grep -qE '^(src/|scripts/signoff-pr\.sh$|scripts/check_changed_coverage\.py$|scripts/check_hosted_service_registrations\.py$|[^/]+\.sln$|Directory\.Build\.props$|\.editorconfig$|\.config/dotnet-tools\.json$)' <<<"$CHANGED_FILES_TEXT"; then
