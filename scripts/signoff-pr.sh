@@ -399,6 +399,171 @@ export_pi_pr_telemetry() {
   if ! publish_pi_pr_telemetry_comment "$ROOT_DIR/.pi/pr-telemetry-summary.md"; then
     echo "Pi PR telemetry comment failed; continuing with signoff."
   fi
+
+  if ! publish_pi_pr_telemetry_ingest "$ROOT_DIR/.pi/pr-telemetry-summary.json"; then
+    echo "Pinalysis telemetry ingest failed; continuing with signoff."
+  fi
+}
+
+build_pi_pr_telemetry_ingest_payload() {
+  local summary_path="$1"
+  local payload_path="$2"
+  local branch repo_json pr_json actor_json
+
+  if [ ! -s "$summary_path" ]; then
+    echo "Pi PR telemetry summary JSON was not produced; skipping Pinalysis ingest."
+    return 1
+  fi
+
+  branch="$(git branch --show-current)"
+  repo_json="$TMP_ROOT/pinalysis-repo.json"
+  pr_json="$TMP_ROOT/pinalysis-pr.json"
+  actor_json="$TMP_ROOT/pinalysis-actor.json"
+
+  if ! gh repo view --json nameWithOwner,url,defaultBranchRef >"$repo_json"; then
+    echo "Could not resolve GitHub repository metadata; skipping Pinalysis ingest."
+    return 1
+  fi
+
+  if ! gh pr view "$branch" --json number,title,url,state,author,baseRefName,headRefName,headRefOid,createdAt,updatedAt,closedAt,mergedAt >"$pr_json"; then
+    echo "Could not resolve current pull request metadata; skipping Pinalysis ingest."
+    return 1
+  fi
+
+  if ! gh api user >"$actor_json"; then
+    echo "Could not resolve GitHub actor metadata; skipping Pinalysis ingest."
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$payload_path")"
+
+  node - "$summary_path" "$repo_json" "$pr_json" "$actor_json" "$payload_path" <<'NODE'
+const { readFileSync, writeFileSync } = require("node:fs");
+
+const [summaryPath, repoPath, prPath, actorPath, payloadPath] = process.argv.slice(2);
+const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
+const optional = (value) => (value === undefined || value === null || value === "" ? null : value);
+const dateOrNull = (value) => optional(value);
+
+const summary = readJson(summaryPath);
+const repo = readJson(repoPath);
+const pr = readJson(prPath);
+const actor = readJson(actorPath);
+const fullName = repo.nameWithOwner || "";
+const [owner, name] = fullName.split("/", 2);
+
+const payload = {
+  schemaVersion: 1,
+  source: "signoff-pr",
+  exporter: {
+    name: "pi-pr-telemetry.mjs",
+    version: "1",
+    commitSha: null,
+  },
+  generatedAt: new Date().toISOString(),
+  cutoffAt: new Date().toISOString(),
+  actor: {
+    gitHubUserId: typeof actor.id === "number" ? actor.id : null,
+    gitHubLogin: optional(actor.login),
+    displayName: optional(actor.name),
+    email: optional(actor.email),
+    avatarUrl: optional(actor.avatar_url),
+  },
+  repository: {
+    provider: "github",
+    owner: optional(owner),
+    name: optional(name),
+    fullName: optional(fullName),
+    htmlUrl: optional(repo.url),
+    cloneUrl: null,
+    defaultBranch: optional(repo.defaultBranchRef?.name),
+  },
+  pullRequest: {
+    number: pr.number,
+    gitHubNodeId: null,
+    htmlUrl: optional(pr.url),
+    title: optional(pr.title),
+    state: optional(pr.state),
+    author: {
+      gitHubUserId: null,
+      gitHubLogin: optional(pr.author?.login),
+      displayName: optional(pr.author?.name),
+      email: null,
+      avatarUrl: optional(pr.author?.avatarUrl),
+    },
+    baseRef: optional(pr.baseRefName),
+    headRef: optional(pr.headRefName || summary.pr?.branch),
+    headSha: optional(pr.headRefOid || summary.pr?.headSha),
+    createdAtGitHub: dateOrNull(pr.createdAt),
+    updatedAtGitHub: dateOrNull(pr.updatedAt),
+    closedAt: dateOrNull(pr.closedAt),
+    mergedAt: dateOrNull(pr.mergedAt),
+  },
+  summary,
+};
+
+writeFileSync(payloadPath, JSON.stringify(payload, null, 2) + "\n");
+NODE
+}
+
+publish_pi_pr_telemetry_ingest() {
+  local summary_path="$1"
+  local app_id="${PINALYSIS_APP_ID:-pinalysis}"
+  local ingest_path="${PINALYSIS_INGEST_PATH:-/api/pi-pr-telemetry/reports}"
+  local payload_path="$ROOT_DIR/.pi/pr-telemetry-ingest-payload.json"
+  local response_path="$ROOT_DIR/.pi/pr-telemetry-ingest-response.json"
+  local repo_name pr_number head_sha idempotency_key
+  local internal_tools_args=()
+
+  if [ "${PINALYSIS_INGEST_DISABLED:-}" = "1" ] || [ "${PINALYSIS_INGEST_DISABLED:-}" = "true" ]; then
+    echo "Pinalysis telemetry ingest disabled by PINALYSIS_INGEST_DISABLED."
+    return 0
+  fi
+
+  if ! command -v internal-tools >/dev/null 2>&1; then
+    echo "internal-tools CLI not found; skipping Pinalysis telemetry ingest."
+    return 1
+  fi
+
+  if ! internal-tools whoami >/dev/null 2>&1; then
+    echo "internal-tools is not logged in; run 'internal-tools login' to enable Pinalysis ingest."
+    return 1
+  fi
+
+  if ! build_pi_pr_telemetry_ingest_payload "$summary_path" "$payload_path"; then
+    return 1
+  fi
+
+  repo_name="$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)"
+  pr_number="$(gh pr view "$(git branch --show-current)" --json number --jq '.number' 2>/dev/null || true)"
+  head_sha="$(git rev-parse HEAD)"
+
+  if [ -z "$repo_name" ] || [ "$repo_name" = "null" ] || [ -z "$pr_number" ] || [ "$pr_number" = "null" ]; then
+    echo "Could not resolve repo/PR idempotency metadata; skipping Pinalysis telemetry ingest."
+    return 1
+  fi
+
+  idempotency_key="github:${repo_name}:pr:${pr_number}:head:${head_sha}"
+
+  internal_tools_args=(call "$app_id" POST "$ingest_path" \
+    --header "Content-Type: application/json" \
+    --header "X-Idempotency-Key: $idempotency_key" \
+    --data "@$payload_path")
+
+  if [ -n "${PINALYSIS_BASE_URL:-}" ]; then
+    internal_tools_args+=(--base-url "$PINALYSIS_BASE_URL")
+  fi
+
+  if [ -n "${PINALYSIS_DOMAIN_SUFFIX:-}" ]; then
+    internal_tools_args+=(--domain-suffix "$PINALYSIS_DOMAIN_SUFFIX")
+  fi
+
+  if ! internal-tools "${internal_tools_args[@]}" >"$response_path"; then
+    echo "Pinalysis ingest request failed. Response, if any, was written to $response_path."
+    return 1
+  fi
+
+  echo "Posted Pi PR telemetry to Pinalysis."
 }
 
 publish_pi_pr_telemetry_comment() {
