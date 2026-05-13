@@ -445,7 +445,10 @@ const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const optional = (value) => (value === undefined || value === null || value === "" ? null : value);
 const dateOrNull = (value) => optional(value);
 
-const summary = readJson(summaryPath);
+const summaryEnvelope = readJson(summaryPath);
+const sourceEvents = Array.isArray(summaryEnvelope.sourceEvents) ? summaryEnvelope.sourceEvents : [];
+const summary = { ...summaryEnvelope };
+delete summary.sourceEvents;
 const repo = readJson(repoPath);
 const pr = readJson(prPath);
 const actor = readJson(actorPath);
@@ -500,6 +503,7 @@ const payload = {
     mergedAt: dateOrNull(pr.mergedAt),
   },
   summary,
+  sourceEvents,
 };
 
 writeFileSync(payloadPath, JSON.stringify(payload, null, 2) + "\n");

@@ -660,7 +660,7 @@ function buildSummary({ repoRoot, branch, headSha, baseRef, events }) {
     `### MCP calls attributed to this PR\n\n| MCP tool | Calls |\n|---|---:|\n${tableRows(mcpCounts)}\n\n` +
     `> Agent exchanges count completed user prompts/back-and-forths; model turns count LLM responses (one response plus any tool calls/results). Token and context attribution is exact for runtime telemetry events. The branch slice is used only to discover contributing Pi session ids; once a session contributes to the PR, the report attributes the full contributing session to the PR so skills, MCP calls, tools, tokens, and context used during planning or branch setup are visible. This duplicates shared-session totals across PRs from the same multi-repo or multi-branch session, but avoids pretending that shared model context can be cleanly split per repo or branch. When the exporter falls back to Pi session logs, contributing sessions are still selected heuristically based on repo/branch mentions in tool calls and results.\n`;
 
-  return { json, md };
+  return { json, md, sourceEvents: currentEvents };
 }
 
 const command = process.argv[2] ?? "summarize";
@@ -693,7 +693,7 @@ const outJson = args["out-json"] || join(repoRoot, ".pi", "pr-telemetry-summary.
 const outMd = args["out-md"] || join(repoRoot, ".pi", "pr-telemetry-summary.md");
 mkdirSync(dirname(outJson), { recursive: true });
 mkdirSync(dirname(outMd), { recursive: true });
-writeFileSync(outJson, JSON.stringify(summary.json, null, 2) + "\n");
+writeFileSync(outJson, JSON.stringify({ ...summary.json, sourceEvents: summary.sourceEvents }, null, 2) + "\n");
 writeFileSync(outMd, summary.md);
 console.log(`Wrote ${outJson}`);
 console.log(`Wrote ${outMd}`);
