@@ -69,7 +69,7 @@ module Persistence =
 
         let upgrader =
             DeployChanges.To
-                .SQLiteDatabase(connectionString: string)
+                .SqliteDatabase(connectionString: string)
                 .WithScriptsEmbeddedInAssembly(
                     Assembly.GetExecutingAssembly(),
                     (fun (scriptName: string) ->
