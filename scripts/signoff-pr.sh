@@ -768,11 +768,15 @@ if ! command -v gh >/dev/null 2>&1; then
 fi
 
 if ! gh help signoff >/dev/null 2>&1; then
-  cat <<'MSG'
-The 'gh signoff' command is not available.
-Install the extension and retry:
-  gh extension install basecamp/gh-signoff
-MSG
+  echo "The 'gh signoff' command is not available; installing basecamp/gh-signoff..."
+  if ! gh extension install basecamp/gh-signoff; then
+    echo "Failed to install the basecamp/gh-signoff extension." >&2
+    exit 1
+  fi
+fi
+
+if ! gh help signoff >/dev/null 2>&1; then
+  echo "The basecamp/gh-signoff extension was installed, but 'gh signoff' is still unavailable." >&2
   exit 1
 fi
 
