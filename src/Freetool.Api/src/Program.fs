@@ -7,11 +7,13 @@ open Microsoft.Extensions.Logging
 open Microsoft.Extensions.Logging.Abstractions
 open Microsoft.EntityFrameworkCore
 open Microsoft.AspNetCore.Http
+open Microsoft.AspNetCore.ResponseCompression
 open Microsoft.AspNetCore.StaticFiles
 open System.Text.Json.Serialization
 open Oxpecker
 open System.Diagnostics
 open System
+open System.IO.Compression
 open OpenTelemetry.Exporter
 open Freetool.Infrastructure.Database
 open Freetool.Infrastructure.Database.Repositories
@@ -287,6 +289,21 @@ let main args =
     builder.Services.AddEndpointsApiExplorer() |> ignore
 
     builder.Services.AddHttpClient() |> ignore
+
+    builder.Services.AddResponseCompression(fun options ->
+        options.EnableForHttps <- true
+        options.MimeTypes <- Seq.append ResponseCompressionDefaults.MimeTypes [ "text/event-stream" ]
+        options.Providers.Add<BrotliCompressionProvider>()
+        options.Providers.Add<GzipCompressionProvider>())
+    |> ignore
+
+    builder.Services.Configure<BrotliCompressionProviderOptions>(fun (options: BrotliCompressionProviderOptions) ->
+        options.Level <- CompressionLevel.Fastest)
+    |> ignore
+
+    builder.Services.Configure<GzipCompressionProviderOptions>(fun (options: GzipCompressionProviderOptions) ->
+        options.Level <- CompressionLevel.Fastest)
+    |> ignore
 
     builder.Services.AddSwaggerGen(fun c ->
         c.SupportNonNullableReferenceTypes()
@@ -582,6 +599,8 @@ let main args =
             )
 
     app.UseHttpsRedirection() |> ignore
+
+    app.UseResponseCompression() |> ignore
 
     // Enable CORS for dev mode
     if isDevMode then
