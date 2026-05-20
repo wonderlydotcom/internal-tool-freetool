@@ -55,7 +55,7 @@ module UiHtml =
         let tag = attrs ([ "value", value ] @ selectedAttr selected) (option ())
         tag { label }
 
-    let datastarGet url = $"@get('{url}')"
+    let datastarGet url = $"@get('{url}', {{requestCancellation: 'cleanup', openWhenHidden: false}})"
 
     let datastarPostForm url = $"@post('{url}', {{contentType: 'form'}})"
 
