@@ -397,14 +397,24 @@ export_pi_pr_telemetry() {
   fi
 
   local pinalysis_url=""
+  local raw_upload_warning=""
 
   if publish_pi_pr_telemetry_ingest "$ROOT_DIR/.pi/pr-telemetry-summary.json"; then
     pinalysis_url="$(pinalysis_pr_url || true)"
+
+    if ! raw_upload_warning="$(publish_pi_pr_raw_session_archives "$ROOT_DIR/.pi/pr-telemetry-summary.json" "$ROOT_DIR/.pi/pr-telemetry-ingest-response.json")"; then
+      if [ -z "$raw_upload_warning" ]; then
+        raw_upload_warning="⚠️ Raw session archive upload failed."
+      fi
+      echo "$raw_upload_warning"
+    elif [ -n "$raw_upload_warning" ]; then
+      echo "$raw_upload_warning"
+    fi
   else
     echo "Pinalysis telemetry ingest failed; continuing with signoff."
   fi
 
-  if ! publish_pi_pr_telemetry_comment "$ROOT_DIR/.pi/pr-telemetry-summary.md" "$pinalysis_url"; then
+  if ! publish_pi_pr_telemetry_comment "$ROOT_DIR/.pi/pr-telemetry-summary.md" "$pinalysis_url" "$raw_upload_warning"; then
     echo "Pi PR telemetry comment failed; continuing with signoff."
   fi
 }
@@ -586,9 +596,144 @@ pinalysis_pr_url() {
   printf 'https://pinalysis.wonderly.info/prs/%s/%s\n' "$repo_name" "$pr_number"
 }
 
+publish_pi_pr_raw_session_archives() {
+  local summary_path="$1"
+  local ingest_response_path="$2"
+  local app_id="${PINALYSIS_APP_ID:-pinalysis}"
+  local report_id manifest_path total uploaded failed missing
+
+  if [ "${PINALYSIS_RAW_SESSION_UPLOAD_DISABLED:-}" = "1" ] || [ "${PINALYSIS_RAW_SESSION_UPLOAD_DISABLED:-}" = "true" ]; then
+    return 0
+  fi
+
+  if [ ! -s "$summary_path" ] || [ ! -s "$ingest_response_path" ]; then
+    printf '⚠️ Raw session archive upload skipped: missing telemetry summary or ingest response.\n'
+    return 1
+  fi
+
+  if ! command -v internal-tools >/dev/null 2>&1; then
+    printf '⚠️ Raw session archive upload skipped: internal-tools CLI not found.\n'
+    return 1
+  fi
+
+  report_id="$(node - "$ingest_response_path" <<'NODE'
+const { readFileSync } = require("node:fs");
+try {
+  const response = JSON.parse(readFileSync(process.argv[2], "utf8"));
+  process.stdout.write(response.id || "");
+} catch {
+  process.stdout.write("");
+}
+NODE
+)"
+
+  if [ -z "$report_id" ] || [ "$report_id" = "null" ]; then
+    printf '⚠️ Raw session archive upload skipped: could not resolve Pinalysis report id.\n'
+    return 1
+  fi
+
+  manifest_path="$TMP_ROOT/raw-session-artifacts.tsv"
+  mkdir -p "$TMP_ROOT/raw-session-artifacts"
+
+  if ! node - "$summary_path" "$TMP_ROOT/raw-session-artifacts" >"$manifest_path" <<'NODE'
+const { existsSync, mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+const { gzipSync } = require("node:zlib");
+
+const [summaryPath, outputDir] = process.argv.slice(2);
+const summary = JSON.parse(readFileSync(summaryPath, "utf8"));
+const events = Array.isArray(summary.sourceEvents) ? summary.sourceEvents : [];
+const sessionIds = new Set(Array.isArray(summary.attribution?.sessionIds) ? summary.attribution.sessionIds : []);
+const filesBySession = new Map();
+
+for (const event of events) {
+  if (!event?.sessionId) continue;
+  sessionIds.add(event.sessionId);
+  if (!filesBySession.has(event.sessionId)) filesBySession.set(event.sessionId, new Set());
+  if (event.sessionFile) filesBySession.get(event.sessionId).add(event.sessionFile);
+}
+
+mkdirSync(outputDir, { recursive: true });
+let index = 0;
+for (const sessionId of [...sessionIds].sort()) {
+  const files = [...(filesBySession.get(sessionId) ?? [])];
+  const sessionFile = files.find((path) => existsSync(path));
+  if (!sessionFile) {
+    console.log(["MISSING", sessionId, "", ""].join("\t"));
+    continue;
+  }
+
+  const gzipBytes = gzipSync(readFileSync(sessionFile));
+  const payloadPath = join(outputDir, `${String(index).padStart(3, "0")}-${sessionId}.json`);
+  const responsePath = join(outputDir, `${String(index).padStart(3, "0")}-${sessionId}.response.json`);
+  const payload = {
+    kind: "raw_session_archive",
+    purpose: `raw_session_archive:${sessionId}`,
+    contentType: "application/gzip",
+    base64Content: gzipBytes.toString("base64"),
+    compressedByteCount: gzipBytes.length,
+  };
+  writeFileSync(payloadPath, JSON.stringify(payload, null, 2) + "\n");
+  console.log(["UPLOAD", sessionId, payloadPath, responsePath].join("\t"));
+  index += 1;
+}
+NODE
+  then
+    printf '⚠️ Raw session archive upload skipped: could not prepare gzip payloads.\n'
+    return 1
+  fi
+
+  total=0
+  uploaded=0
+  failed=0
+  missing=0
+
+  while IFS=$'\t' read -r status session_id payload_path response_path; do
+    [ -z "${status:-}" ] && continue
+    total=$((total + 1))
+
+    if [ "$status" = "MISSING" ]; then
+      missing=$((missing + 1))
+      continue
+    fi
+
+    local artifact_path="/api/pi-pr-telemetry/reports/$report_id/artifacts"
+    local internal_tools_args=(call "$app_id" POST "$artifact_path" \
+      --header "Content-Type: application/json" \
+      --data "@$payload_path")
+
+    if [ -n "${PINALYSIS_BASE_URL:-}" ]; then
+      internal_tools_args+=(--base-url "$PINALYSIS_BASE_URL")
+    fi
+
+    if [ -n "${PINALYSIS_DOMAIN_SUFFIX:-}" ]; then
+      internal_tools_args+=(--domain-suffix "$PINALYSIS_DOMAIN_SUFFIX")
+    fi
+
+    if internal-tools "${internal_tools_args[@]}" >"$response_path"; then
+      uploaded=$((uploaded + 1))
+    else
+      failed=$((failed + 1))
+    fi
+  done <"$manifest_path"
+
+  if [ "$total" -eq 0 ]; then
+    printf '⚠️ Raw session archive upload incomplete: no contributing sessions were found.\n'
+    return 1
+  fi
+
+  if [ "$uploaded" -ne "$total" ]; then
+    printf '⚠️ Raw session archive upload incomplete: %s of %s sessions uploaded (%s missing local files, %s failed uploads).\n' "$uploaded" "$total" "$missing" "$failed"
+    return 1
+  fi
+
+  return 0
+}
+
 publish_pi_pr_telemetry_comment() {
   local summary_path="$1"
   local pinalysis_url="${2:-}"
+  local raw_upload_warning="${3:-}"
   local marker='<!-- pi-pr-telemetry -->'
   local branch pr_number repo_name comment_body existing_comment_id comment_intro
 
@@ -613,6 +758,13 @@ publish_pi_pr_telemetry_comment() {
   comment_intro=""
   if [ -n "$pinalysis_url" ]; then
     comment_intro="**Full Pinalysis session transcript:** $pinalysis_url"
+  fi
+  if [ -n "$raw_upload_warning" ]; then
+    if [ -n "$comment_intro" ]; then
+      comment_intro="$(printf '%s\n\n%s' "$comment_intro" "$raw_upload_warning")"
+    else
+      comment_intro="$raw_upload_warning"
+    fi
   fi
 
   if [ -n "$comment_intro" ]; then
