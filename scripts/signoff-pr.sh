@@ -396,12 +396,16 @@ export_pi_pr_telemetry() {
     return
   fi
 
-  if ! publish_pi_pr_telemetry_comment "$ROOT_DIR/.pi/pr-telemetry-summary.md"; then
-    echo "Pi PR telemetry comment failed; continuing with signoff."
+  local pinalysis_url=""
+
+  if publish_pi_pr_telemetry_ingest "$ROOT_DIR/.pi/pr-telemetry-summary.json"; then
+    pinalysis_url="$(pinalysis_pr_url || true)"
+  else
+    echo "Pinalysis telemetry ingest failed; continuing with signoff."
   fi
 
-  if ! publish_pi_pr_telemetry_ingest "$ROOT_DIR/.pi/pr-telemetry-summary.json"; then
-    echo "Pinalysis telemetry ingest failed; continuing with signoff."
+  if ! publish_pi_pr_telemetry_comment "$ROOT_DIR/.pi/pr-telemetry-summary.md" "$pinalysis_url"; then
+    echo "Pi PR telemetry comment failed; continuing with signoff."
   fi
 }
 
@@ -570,10 +574,23 @@ publish_pi_pr_telemetry_ingest() {
   echo "Posted Pi PR telemetry to Pinalysis."
 }
 
+pinalysis_pr_url() {
+  local repo_name pr_number
+  repo_name="$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || true)"
+  pr_number="$(gh pr view "$(git branch --show-current)" --json number --jq '.number' 2>/dev/null || true)"
+
+  if [ -z "$repo_name" ] || [ "$repo_name" = "null" ] || [ -z "$pr_number" ] || [ "$pr_number" = "null" ]; then
+    return 1
+  fi
+
+  printf 'https://pinalysis.wonderly.info/prs/%s/%s\n' "$repo_name" "$pr_number"
+}
+
 publish_pi_pr_telemetry_comment() {
   local summary_path="$1"
+  local pinalysis_url="${2:-}"
   local marker='<!-- pi-pr-telemetry -->'
-  local branch pr_number repo_name comment_body existing_comment_id
+  local branch pr_number repo_name comment_body existing_comment_id comment_intro
 
   if [ ! -s "$summary_path" ]; then
     echo "Pi PR telemetry summary was not produced; skipping PR comment."
@@ -593,7 +610,16 @@ publish_pi_pr_telemetry_comment() {
     return
   fi
 
-  comment_body="$(printf '%s\n\n%s\n' "$marker" "$(cat "$summary_path")")"
+  comment_intro=""
+  if [ -n "$pinalysis_url" ]; then
+    comment_intro="**Full Pinalysis session transcript:** $pinalysis_url"
+  fi
+
+  if [ -n "$comment_intro" ]; then
+    comment_body="$(printf '%s\n\n%s\n\n%s\n' "$marker" "$comment_intro" "$(cat "$summary_path")")"
+  else
+    comment_body="$(printf '%s\n\n%s\n' "$marker" "$(cat "$summary_path")")"
+  fi
 
   existing_comment_id="$(gh api --paginate "repos/$repo_name/issues/$pr_number/comments" \
     --jq ".[] | select(.body | contains(\"$marker\")) | .id" 2>/dev/null \
