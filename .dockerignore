@@ -1,0 +1,10 @@
+.git
+.gitignore
+**/bin
+**/obj
+**/node_modules
+.terraform
+.tmp
+data
+coverage
+.DS_Store

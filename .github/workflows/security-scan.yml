@@ -1,0 +1,402 @@
+name: security-scan
+
+on:
+  schedule:
+    - cron: '17 10 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: security-scan-daily
+  cancel-in-progress: false
+
+env:
+  TRIVY_VERSION: 0.62.1
+  SECURITY_SCAN_INGEST_URL: ${{ vars.SECURITY_SCAN_INGEST_URL || 'https://it.wonderly.info/api/security/scans/ingest' }}
+  SECURITY_SCAN_INGEST_AUDIENCE: ${{ vars.SECURITY_SCAN_INGEST_AUDIENCE || 'internal-tools-security-ingest' }}
+  SECURITY_SCAN_WORK_DIR: .tmp/security-scan
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate security scan configuration
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${SECURITY_SCAN_INGEST_URL:-}" ]]; then
+            echo "Missing required GitHub Actions variable: SECURITY_SCAN_INGEST_URL" >&2
+            echo "Set it to the control-plane /api/security/scans/ingest endpoint." >&2
+            exit 1
+          fi
+
+          if [[ -z "${SECURITY_SCAN_INGEST_AUDIENCE:-}" ]]; then
+            echo "Missing security scan ingest audience." >&2
+            exit 1
+          fi
+
+      - name: Jitter daily fleet scan
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" != "schedule" ]]; then
+            echo "Skipping daily jitter for ${GITHUB_EVENT_NAME}."
+            exit 0
+          fi
+
+          sleep_seconds=$((RANDOM % 2701))
+          echo "Sleeping ${sleep_seconds}s before starting the daily security scan."
+          sleep "${sleep_seconds}"
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install Trivy and jq
+        run: |
+          set -euo pipefail
+
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y jq
+          fi
+
+          case "$(uname -m)" in
+            x86_64) trivy_arch="64bit" ;;
+            aarch64|arm64) trivy_arch="ARM64" ;;
+            *)
+              echo "Unsupported runner architecture: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+
+          mkdir -p "${RUNNER_TEMP}/trivy"
+          curl -fsSL \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${trivy_arch}.tar.gz" \
+            -o "${RUNNER_TEMP}/trivy.tar.gz"
+          tar -xzf "${RUNNER_TEMP}/trivy.tar.gz" -C "${RUNNER_TEMP}/trivy" trivy
+          sudo install -m 0755 "${RUNNER_TEMP}/trivy/trivy" /usr/local/bin/trivy
+          trivy --version
+
+      - name: Cache Trivy vulnerability database
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ runner.os }}-${{ env.TRIVY_VERSION }}
+          restore-keys: |
+            trivy-db-${{ runner.os }}-
+
+      - name: Prepare scan workspace
+        run: |
+          set -euo pipefail
+          rm -rf "${SECURITY_SCAN_WORK_DIR}"
+          mkdir -p \
+            "${SECURITY_SCAN_WORK_DIR}/reports" \
+            "${SECURITY_SCAN_WORK_DIR}/logs" \
+            "${SECURITY_SCAN_WORK_DIR}/targets"
+
+      - name: Run Trivy source scan
+        run: |
+          set -euo pipefail
+
+          started_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          report_path="${SECURITY_SCAN_WORK_DIR}/reports/trivy-source.json"
+          log_path="${SECURITY_SCAN_WORK_DIR}/logs/trivy-source.log"
+
+          trivy_args=(
+            fs
+            --scanners vuln
+            --format json
+            --output "${report_path}"
+            --skip-dirs .git
+            --skip-dirs '**/bin'
+            --skip-dirs '**/obj'
+            --skip-dirs '**/node_modules'
+            --skip-dirs '**/.terraform'
+            --skip-dirs .tmp
+            --skip-dirs '**/data'
+            --skip-dirs '**/coverage'
+          )
+
+          if [[ -f .trivyignore ]]; then
+            trivy_args+=(--ignorefile .trivyignore)
+          fi
+
+          set +e
+          trivy "${trivy_args[@]}" . >"${log_path}" 2>&1
+          exit_code=$?
+          set -e
+
+          completed_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+          if [[ "${exit_code}" -eq 0 ]]; then
+            jq -n \
+              --arg kind "source" \
+              --arg artifactName "source" \
+              --arg status "succeeded" \
+              --arg reportField "sourceReport" \
+              --arg startedAt "${started_at}" \
+              --arg completedAt "${completed_at}" \
+              '{kind: $kind, artifactName: $artifactName, status: $status, reportField: $reportField, startedAt: $startedAt, completedAt: $completedAt}' \
+              > "${SECURITY_SCAN_WORK_DIR}/targets/source.json"
+          else
+            failure_log_tail="$(tail -n 200 "${log_path}" || true)"
+            jq -n \
+              --arg kind "source" \
+              --arg artifactName "source" \
+              --arg status "failed" \
+              --arg reportField "sourceReport" \
+              --arg failureSummary "trivy fs failed with exit code ${exit_code}" \
+              --arg failureLogTail "${failure_log_tail}" \
+              --arg startedAt "${started_at}" \
+              --arg completedAt "${completed_at}" \
+              '{kind: $kind, artifactName: $artifactName, status: $status, reportField: $reportField, failureSummary: $failureSummary, failureLogTail: $failureLogTail, startedAt: $startedAt, completedAt: $completedAt}' \
+              > "${SECURITY_SCAN_WORK_DIR}/targets/source.json"
+          fi
+
+      - name: Discover, build, and scan Docker images
+        run: |
+          set -euo pipefail
+
+          safe_target_name() {
+            local dockerfile_path="$1"
+            local value="${dockerfile_path%/Dockerfile}"
+
+            if [[ "${value}" == "Dockerfile" || -z "${value}" ]]; then
+              value="root"
+            fi
+
+            printf '%s' "${value}" \
+              | tr '[:upper:]' '[:lower:]' \
+              | sed -E 's#[^a-z0-9]+#-#g; s#^-+##; s#-+$##'
+          }
+
+          dockerfile_context() {
+            local dockerfile_path="$1"
+
+            if [[ "${dockerfile_path}" =~ ^src/[^/]+\.Api/Dockerfile$ ]]; then
+              printf '.'
+            else
+              dirname "${dockerfile_path}"
+            fi
+          }
+
+          mapfile -t dockerfiles < <(
+            find . \
+              \( \
+                -path './.git' -o -path './*/.git' -o \
+                -path './bin' -o -path './*/bin' -o \
+                -path './obj' -o -path './*/obj' -o \
+                -path './node_modules' -o -path './*/node_modules' -o \
+                -path './.terraform' -o -path './*/.terraform' -o \
+                -path './.tmp' -o -path './*/.tmp' -o \
+                -path './data' -o -path './*/data' -o \
+                -path './coverage' -o -path './*/coverage' -o \
+                -path './local-dev' -o -path './*/local-dev' -o \
+                -path './temp' -o -path './*/temp' \
+              \) -prune -o \
+              -type f -name Dockerfile -print \
+              | sed 's#^\./##' \
+              | sort
+          )
+
+          if [[ "${#dockerfiles[@]}" -eq 0 ]]; then
+            echo "No Dockerfiles discovered for image scanning."
+            exit 0
+          fi
+
+          for dockerfile_path in "${dockerfiles[@]}"; do
+            started_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            target_name="$(safe_target_name "${dockerfile_path}")"
+            context_path="$(dockerfile_context "${dockerfile_path}")"
+            image_tag="security-scan/${target_name}:${GITHUB_SHA}"
+            report_field="imageReport_${target_name}"
+            report_path="${SECURITY_SCAN_WORK_DIR}/reports/trivy-image-${target_name}.json"
+            build_log_path="${SECURITY_SCAN_WORK_DIR}/logs/docker-build-${target_name}.log"
+            scan_log_path="${SECURITY_SCAN_WORK_DIR}/logs/trivy-image-${target_name}.log"
+            target_json_path="${SECURITY_SCAN_WORK_DIR}/targets/image-${target_name}.json"
+
+            echo "Building ${dockerfile_path} with context ${context_path} as ${image_tag}."
+
+            set +e
+            docker build --platform linux/amd64 -f "${dockerfile_path}" -t "${image_tag}" "${context_path}" >"${build_log_path}" 2>&1
+            build_exit_code=$?
+            set -e
+
+            if [[ "${build_exit_code}" -ne 0 ]]; then
+              completed_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+              failure_log_tail="$(tail -n 200 "${build_log_path}" || true)"
+              jq -n \
+                --arg kind "image" \
+                --arg artifactName "${target_name}" \
+                --arg status "failed" \
+                --arg dockerfile "${dockerfile_path}" \
+                --arg context "${context_path}" \
+                --arg localImageTag "${image_tag}" \
+                --arg failureSummary "docker build failed with exit code ${build_exit_code}" \
+                --arg failureLogTail "${failure_log_tail}" \
+                --arg startedAt "${started_at}" \
+                --arg completedAt "${completed_at}" \
+                '{kind: $kind, artifactName: $artifactName, status: $status, dockerfile: $dockerfile, context: $context, localImageTag: $localImageTag, failureSummary: $failureSummary, failureLogTail: $failureLogTail, startedAt: $startedAt, completedAt: $completedAt}' \
+                > "${target_json_path}"
+              continue
+            fi
+
+            set +e
+            trivy image --scanners vuln --format json --output "${report_path}" "${image_tag}" >"${scan_log_path}" 2>&1
+            scan_exit_code=$?
+            set -e
+            completed_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+            if [[ "${scan_exit_code}" -eq 0 ]]; then
+              jq -n \
+                --arg kind "image" \
+                --arg artifactName "${target_name}" \
+                --arg status "succeeded" \
+                --arg reportField "${report_field}" \
+                --arg dockerfile "${dockerfile_path}" \
+                --arg context "${context_path}" \
+                --arg localImageTag "${image_tag}" \
+                --arg startedAt "${started_at}" \
+                --arg completedAt "${completed_at}" \
+                '{kind: $kind, artifactName: $artifactName, status: $status, reportField: $reportField, dockerfile: $dockerfile, context: $context, localImageTag: $localImageTag, startedAt: $startedAt, completedAt: $completedAt}' \
+                > "${target_json_path}"
+            else
+              failure_log_tail="$(tail -n 200 "${scan_log_path}" || true)"
+              jq -n \
+                --arg kind "image" \
+                --arg artifactName "${target_name}" \
+                --arg status "failed" \
+                --arg reportField "${report_field}" \
+                --arg dockerfile "${dockerfile_path}" \
+                --arg context "${context_path}" \
+                --arg localImageTag "${image_tag}" \
+                --arg failureSummary "trivy image failed with exit code ${scan_exit_code}" \
+                --arg failureLogTail "${failure_log_tail}" \
+                --arg startedAt "${started_at}" \
+                --arg completedAt "${completed_at}" \
+                '{kind: $kind, artifactName: $artifactName, status: $status, reportField: $reportField, dockerfile: $dockerfile, context: $context, localImageTag: $localImageTag, failureSummary: $failureSummary, failureLogTail: $failureLogTail, startedAt: $startedAt, completedAt: $completedAt}' \
+                > "${target_json_path}"
+            fi
+          done
+
+      - name: Assemble ingest metadata
+        run: |
+          set -euo pipefail
+
+          targets_path="${SECURITY_SCAN_WORK_DIR}/targets.json"
+          metadata_path="${SECURITY_SCAN_WORK_DIR}/metadata.json"
+
+          jq -s '.' "${SECURITY_SCAN_WORK_DIR}"/targets/*.json > "${targets_path}"
+
+          started_at="$(jq -r 'map(.startedAt) | map(select(. != null and . != "")) | min // empty' "${targets_path}")"
+          completed_at="$(jq -r 'map(.completedAt) | map(select(. != null and . != "")) | max // empty' "${targets_path}")"
+          workflow_ref="${GITHUB_WORKFLOW_REF:-${GITHUB_REPOSITORY}/.github/workflows/security-scan.yml@${GITHUB_REF}}"
+          workflow_run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          jq -n \
+            --slurpfile targets "${targets_path}" \
+            --arg schemaVersion "security-scan.v1" \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg sha "${GITHUB_SHA}" \
+            --arg ref "${GITHUB_REF}" \
+            --arg workflowRunId "${GITHUB_RUN_ID}" \
+            --arg workflowAttempt "${GITHUB_RUN_ATTEMPT}" \
+            --arg workflowRunUrl "${workflow_run_url}" \
+            --arg eventName "${GITHUB_EVENT_NAME}" \
+            --arg workflowRef "${workflow_ref}" \
+            --arg scannerName "trivy" \
+            --arg scannerVersion "${TRIVY_VERSION}" \
+            --arg startedAt "${started_at}" \
+            --arg completedAt "${completed_at}" \
+            '{schemaVersion: $schemaVersion, repository: $repository, sha: $sha, ref: $ref, workflowRunId: $workflowRunId, workflowAttempt: $workflowAttempt, workflowRunUrl: $workflowRunUrl, eventName: $eventName, workflowRef: $workflowRef, scanner: {name: $scannerName, version: $scannerVersion}, startedAt: $startedAt, completedAt: $completedAt, targets: $targets[0]}' \
+            > "${metadata_path}"
+
+          jq '.' "${metadata_path}"
+
+      - name: Upload scan reports to control plane
+        run: |
+          set -euo pipefail
+
+          metadata_path="${SECURITY_SCAN_WORK_DIR}/metadata.json"
+          response_path="${SECURITY_SCAN_WORK_DIR}/ingest-response.json"
+          encoded_audience="$(jq -nr --arg audience "${SECURITY_SCAN_INGEST_AUDIENCE}" '$audience|@uri')"
+          oidc_response="$(curl -fsSL -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${encoded_audience}")"
+          oidc_token="$(jq -r '.value // empty' <<< "${oidc_response}")"
+
+          if [[ -z "${oidc_token}" ]]; then
+            echo "GitHub Actions OIDC response did not contain a token." >&2
+            exit 1
+          fi
+
+          curl_args=(
+            -fsS
+            -X POST
+            "${SECURITY_SCAN_INGEST_URL}"
+            -H "Authorization: Bearer ${oidc_token}"
+            -F "metadata=@${metadata_path};type=application/json"
+          )
+
+          if [[ -s "${SECURITY_SCAN_WORK_DIR}/reports/trivy-source.json" ]]; then
+            curl_args+=( -F "sourceReport=@${SECURITY_SCAN_WORK_DIR}/reports/trivy-source.json;type=application/json" )
+          fi
+
+          while IFS= read -r target; do
+            field="$(jq -r '.reportField // empty' "${target}")"
+            status="$(jq -r '.status // empty' "${target}")"
+            artifact_name="$(jq -r '.artifactName // empty' "${target}")"
+            report_path="${SECURITY_SCAN_WORK_DIR}/reports/trivy-image-${artifact_name}.json"
+
+            if [[ "${status}" == "succeeded" && "${field}" == imageReport_* && -s "${report_path}" ]]; then
+              curl_args+=( -F "${field}=@${report_path};type=application/json" )
+            fi
+          done < <(find "${SECURITY_SCAN_WORK_DIR}/targets" -type f -name 'image-*.json' -print | sort)
+
+          curl "${curl_args[@]}" | tee "${response_path}" | jq '.'
+
+          {
+            echo "## Security scan ingest"
+            echo
+            jq -r '
+              "- App: \(.displayName // .appId // "unknown")",
+              "- Status: \(.status // "unknown")",
+              "- Open findings: \(.openFindingCount // 0)",
+              "- Unique vulnerabilities: \(.uniqueVulnerabilityCount // 0)",
+              "- Severity counts: critical=\(.severityCounts.critical // 0), high=\(.severityCounts.high // 0), medium=\(.severityCounts.medium // 0), low=\(.severityCounts.low // 0), unknown=\(.severityCounts.unknown // 0)",
+              "- Dashboard: \(.dashboardUrl // "not configured")"
+            ' "${response_path}"
+            echo
+            echo "### Top vulnerabilities"
+            jq -r '(.topVulnerabilities // [])[] | "- \(.vulnerabilityId): \(.occurrenceCount) occurrence(s), severity \(.maxSeverity)"' "${response_path}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          failed_target_count="$(jq '[.targets[] | select(.status == "failed")] | length' "${metadata_path}")"
+
+          if [[ "${failed_target_count}" -gt 0 ]]; then
+            echo "Recorded ${failed_target_count} failed security scan target(s) in the control plane." >&2
+            exit 1
+          fi
+
+      - name: Upload raw security scan artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-scan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.SECURITY_SCAN_WORK_DIR }}
+          if-no-files-found: ignore
+          retention-days: 14
