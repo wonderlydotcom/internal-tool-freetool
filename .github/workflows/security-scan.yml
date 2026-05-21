@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  TRIVY_VERSION: 0.62.1
+  TRIVY_VERSION: 0.70.0
   SECURITY_SCAN_INGEST_URL: ${{ vars.SECURITY_SCAN_INGEST_URL || 'https://it.wonderly.info/api/security/scans/ingest' }}
   SECURITY_SCAN_INGEST_AUDIENCE: ${{ vars.SECURITY_SCAN_INGEST_AUDIENCE || 'internal-tools-security-ingest' }}
   SECURITY_SCAN_WORK_DIR: .tmp/security-scan
