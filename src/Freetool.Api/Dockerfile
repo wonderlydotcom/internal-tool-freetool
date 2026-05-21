@@ -15,7 +15,9 @@ COPY . .
 RUN dotnet publish src/Freetool.Api/Freetool.Api.fsproj -c Release -o /app
 
 # Final runtime image
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra
+# Preserve current root runtime behavior for app data PVC writes.
+USER 0
 WORKDIR /app
 COPY --from=build /app .
 
