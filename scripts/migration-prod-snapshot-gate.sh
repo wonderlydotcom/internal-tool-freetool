@@ -50,14 +50,37 @@ data_dir="${work_root}/data"
 logs_dir="${work_root}/logs"
 container_log="${logs_dir}/container.log"
 
+remove_work_root() {
+  [[ -e "${work_root}" ]] || return 0
+
+  if rm -rf "${work_root}" 2>/dev/null; then
+    return 0
+  fi
+
+  log "Standard cleanup could not remove ${work_root}; retrying with sudo if available."
+  if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    if sudo rm -rf "${work_root}"; then
+      return 0
+    fi
+  fi
+
+  log "WARNING: Could not remove temporary migration gate files at ${work_root}"
+  return 0
+}
+
 # shellcheck disable=SC2317 # cleanup is invoked by trap.
 cleanup() {
-  docker rm -f "${container_name}" >/dev/null 2>&1 || true
+  local status=$?
+  set +e
+
+  docker rm -f "${container_name}" >/dev/null 2>&1
   if [[ "${MIGRATION_GATE_KEEP_TEMP:-false}" != "true" ]]; then
-    rm -rf "${work_root}"
+    remove_work_root
   else
     log "Keeping temporary files at ${work_root} because MIGRATION_GATE_KEEP_TEMP=true"
   fi
+
+  return "${status}"
 }
 trap cleanup EXIT
 
@@ -160,6 +183,7 @@ docker run -d \
   -p 127.0.0.1::8080 \
   -v "${data_dir}:/app/data" \
   -e ASPNETCORE_ENVIRONMENT=Production \
+  -e Auth__DataProtection__KeysPath=/tmp/migration-gate-data-protection-keys \
   -e "ConnectionStrings__DefaultConnection=Data Source=/app/data/${db_basename}" \
   -e AdAgent__WorkerEnabled=false \
   -e SnowflakeSync__Enabled=false \
