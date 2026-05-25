@@ -1,0 +1,119 @@
+name: migration-prod-snapshot-gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Run even if no DB migration files changed
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ${{ github.repository }}-migration-prod-snapshot-gate
+  cancel-in-progress: false
+
+jobs:
+  migration-prod-snapshot-gate:
+    runs-on: ubuntu-latest
+    env:
+      CI: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine whether migration gate is required
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FORCE: ${{ github.event.inputs.force }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && "${FORCE:-false}" == "true" ]]; then
+            echo "required=true" >> "${GITHUB_OUTPUT}"
+            echo "Manual force requested; running migration gate."
+            exit 0
+          fi
+
+          if [[ "${EVENT_NAME}" != "pull_request" ]]; then
+            echo "required=false" >> "${GITHUB_OUTPUT}"
+            echo "Not a pull_request and force was not requested; skipping migration gate."
+            exit 0
+          fi
+
+          mapfile -t changed_files < <(git diff --name-only "${BASE_SHA}...${HEAD_SHA}")
+          printf '%s\n' "${changed_files[@]}" > changed-files.txt
+
+          required=false
+          for path in "${changed_files[@]}"; do
+            case "${path}" in
+              src/**/Database/Migrations/**|\
+              src/**/Database/Persistence.fs|\
+              src/**/*DbContext*.fs|\
+              src/**/*.fsproj)
+                required=true
+                break
+                ;;
+              *DBUP*.sql|*DbUp*.sql|*dbup*.sql|*Migration*.sql|*migration*.sql)
+                required=true
+                break
+                ;;
+            esac
+          done
+
+          echo "required=${required}" >> "${GITHUB_OUTPUT}"
+          if [[ "${required}" == "true" ]]; then
+            echo "DBUp/migration-relevant changes detected; migration gate is required."
+          else
+            echo "No DBUp/migration-relevant changes detected; skipping migration gate."
+          fi
+
+      - name: Reject untrusted PR migration gate
+        if: ${{ steps.changes.outputs.required == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          echo "Migration gate requires production snapshot access and cannot run for forked PRs." >&2
+          echo "A maintainer must rerun this workflow from a trusted branch." >&2
+          exit 1
+
+      - name: Install internal-tools CLI
+        if: ${{ steps.changes.outputs.required == 'true' }}
+        run: |
+          set -euo pipefail
+          if command -v internal-tools >/dev/null 2>&1; then
+            internal-tools --version || true
+            exit 0
+          fi
+
+          if command -v brew >/dev/null 2>&1; then
+            brew tap wonderlydotcom/tap
+            brew install internal-tools
+          elif [[ -x /home/linuxbrew/.linuxbrew/bin/brew ]]; then
+            eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+            brew tap wonderlydotcom/tap
+            brew install internal-tools
+          else
+            echo "Homebrew is required to install internal-tools on this runner." >&2
+            exit 1
+          fi
+
+          brew_bin="$(brew --prefix)/bin"
+          echo "${brew_bin}" >> "${GITHUB_PATH}"
+          export PATH="${brew_bin}:${PATH}"
+          internal-tools --version || true
+
+      - name: Run prod snapshot migration gate
+        if: ${{ steps.changes.outputs.required == 'true' }}
+        run: scripts/migration-prod-snapshot-gate.sh
+
+      - name: Migration gate not required
+        if: ${{ steps.changes.outputs.required != 'true' }}
+        run: echo "No DB migration-relevant changes; migration prod snapshot gate skipped."
