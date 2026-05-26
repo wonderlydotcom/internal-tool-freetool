@@ -1,0 +1,54 @@
+name: migration-prod-snapshot-gate-autoretry
+
+on:
+  workflow_run:
+    workflows: ["migration-prod-snapshot-gate"]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: ${{ github.repository }}-migration-prod-snapshot-gate-autoretry-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  rerun-cancelled-migration-gate:
+    if: ${{ github.event.workflow_run.conclusion == 'cancelled' && github.event.workflow_run.run_attempt < 3 }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Inspect cancellation
+        id: inspect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+
+          attempt="$(gh api "repos/${REPO}/actions/runs/${RUN_ID}" --jq '.run_attempt // 1')"
+          gate_started_count="$(gh api "repos/${REPO}/actions/runs/${RUN_ID}/attempts/${attempt}/jobs" --jq '[.jobs[] | select(.name == "migration-prod-snapshot-gate" and .started_at != null)] | length')"
+
+          echo "attempt=${attempt}" >> "${GITHUB_OUTPUT}"
+
+          if (( gate_started_count > 0 )); then
+            echo "Cancelled migration gate had already started; assuming this was an intentional cancellation."
+            echo "should_retry=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          echo "Cancelled migration gate never started; retrying after the queue has had time to drain."
+          echo "should_retry=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Wait before retrying
+        if: ${{ steps.inspect.outputs.should_retry == 'true' }}
+        run: sleep 180
+
+      - name: Rerun cancelled migration gate
+        if: ${{ steps.inspect.outputs.should_retry == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: gh run rerun "${RUN_ID}" --repo "${REPO}"

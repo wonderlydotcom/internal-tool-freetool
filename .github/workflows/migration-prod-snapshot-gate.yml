@@ -13,15 +13,14 @@ permissions:
   contents: read
   id-token: write
 
-concurrency:
-  group: ${{ github.repository }}-migration-prod-snapshot-gate
-  cancel-in-progress: false
-
 jobs:
-  migration-prod-snapshot-gate:
+  detect_changes:
+    name: determine-migration-gate-required
     runs-on: ubuntu-latest
     env:
       CI: true
+    outputs:
+      required: ${{ steps.changes.outputs.required }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -77,15 +76,32 @@ jobs:
             echo "No DBUp/migration-relevant changes detected; skipping migration gate."
           fi
 
+  migration-prod-snapshot-gate:
+    name: migration-prod-snapshot-gate
+    needs: detect_changes
+    runs-on: ubuntu-latest
+    concurrency:
+      # GitHub Actions concurrency is not FIFO; no-op runs get unique groups so they cannot evict real gates.
+      group: ${{ needs.detect_changes.outputs.required == 'true' && format('{0}-migration-prod-snapshot-gate', github.repository) || format('{0}-migration-prod-snapshot-gate-noop-{1}', github.repository, github.run_id) }}
+      cancel-in-progress: false
+    env:
+      CI: true
+    steps:
+      - name: Checkout
+        if: ${{ needs.detect_changes.outputs.required == 'true' }}
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Reject untrusted PR migration gate
-        if: ${{ steps.changes.outputs.required == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        if: ${{ needs.detect_changes.outputs.required == 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
           echo "Migration gate requires production snapshot access and cannot run for forked PRs." >&2
           echo "A maintainer must rerun this workflow from a trusted branch." >&2
           exit 1
 
       - name: Install internal-tools CLI
-        if: ${{ steps.changes.outputs.required == 'true' }}
+        if: ${{ needs.detect_changes.outputs.required == 'true' }}
         run: |
           set -euo pipefail
           if command -v internal-tools >/dev/null 2>&1; then
@@ -111,9 +127,9 @@ jobs:
           internal-tools --version || true
 
       - name: Run prod snapshot migration gate
-        if: ${{ steps.changes.outputs.required == 'true' }}
+        if: ${{ needs.detect_changes.outputs.required == 'true' }}
         run: scripts/migration-prod-snapshot-gate.sh
 
       - name: Migration gate not required
-        if: ${{ steps.changes.outputs.required != 'true' }}
+        if: ${{ needs.detect_changes.outputs.required != 'true' }}
         run: echo "No DB migration-relevant changes; migration prod snapshot gate skipped."
