@@ -52,6 +52,7 @@
     <EmbeddedResource Include="src/Database/Migrations/DatabaseUpgradeScripts.DBUP.027_ForceRequiredForBooleanInputs.sql" />
     <EmbeddedResource Include="src/Database/Migrations/DatabaseUpgradeScripts.DBUP.028_AddIdentityGroupSpaceMappings.sql" />
     <EmbeddedResource Include="src/Database/Migrations/DatabaseUpgradeScripts.DBUP.029_CreateDashboardsTable.sql" />
+    <EmbeddedResource Include="src/Database/Migrations/DatabaseUpgradeScripts.DBUP.030_FixFoldersSelfForeignKey.sql" />
   </ItemGroup>
 
   <ItemGroup>
