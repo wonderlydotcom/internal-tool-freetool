@@ -95,6 +95,37 @@ let ``ensureOpenFgaStoreWithRetry retries transient store lookup failures withou
     Assert.Contains(logger.Warnings, fun message -> message.Contains("Retrying"))
 
 [<Fact>]
+let ``ensureOpenFgaStoreWithRetry honors startup retry attempt override`` () =
+    let previous = Environment.GetEnvironmentVariable("OpenFGA__StartupRetryAttempts")
+    Environment.SetEnvironmentVariable("OpenFGA__StartupRetryAttempts", "1")
+
+    try
+        let logger = CapturingLogger()
+        let mutable storeExistsCalls = 0
+        let mutable sleepCalls = 0
+
+        let dependencies = {
+            GetSavedStoreId = fun () -> Some "store-123"
+            SaveStoreId = fun _ -> ()
+            StoreExists =
+                fun _ ->
+                    storeExistsCalls <- storeExistsCalls + 1
+                    raise (InvalidOperationException "connection refused")
+            CreateStore = fun () -> "new-store"
+            Sleep = fun _ -> sleepCalls <- sleepCalls + 1
+        }
+
+        Assert.Throws<InvalidOperationException>(fun () ->
+            OpenFgaStoreInitialization.ensureOpenFgaStoreWithRetry (logger :> ILogger) dependencies "" false
+            |> ignore)
+        |> ignore
+
+        Assert.Equal(1, storeExistsCalls)
+        Assert.Equal(0, sleepCalls)
+    finally
+        Environment.SetEnvironmentVariable("OpenFGA__StartupRetryAttempts", previous)
+
+[<Fact>]
 let ``ensureOpenFgaStore uses existing persisted store when it still exists`` () =
     let logger = CapturingLogger()
     let mutable saveStoreCalls = 0

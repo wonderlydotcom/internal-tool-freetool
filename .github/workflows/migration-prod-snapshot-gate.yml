@@ -58,6 +58,8 @@ jobs:
               src/**/Database/Migrations/**|\
               src/**/Database/Persistence.fs|\
               src/**/*DbContext*.fs|\
+              scripts/migration-prod-snapshot-gate.sh|\
+              .github/workflows/migration-prod-snapshot-gate.yml|\
               src/**/*.fsproj)
                 required=true
                 break

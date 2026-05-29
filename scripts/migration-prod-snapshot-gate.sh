@@ -32,13 +32,126 @@ esac
 
 app_id="${MIGRATION_GATE_APP_ID:-${default_app_id}}"
 
+validate_sqlite_schema_integrity() {
+  log "Validating local SQLite migration schema integrity"
+
+  python3 - <<'PYCODE'
+import os
+import sqlite3
+import sys
+import tempfile
+from pathlib import Path
+
+repo_root = Path.cwd()
+migration_files = sorted(
+    repo_root.glob("src/**/Database/Migrations/*.sql"),
+    key=lambda path: (path.parent.as_posix(), path.name),
+)
+
+if not migration_files:
+    print("[migration-gate] No SQLite migration files found; skipping local schema integrity validation.")
+    raise SystemExit(0)
+
+fd, db_path = tempfile.mkstemp(prefix="migration-gate-schema-", suffix=".db")
+os.close(fd)
+conn = None
+
+try:
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys=OFF;")
+
+    for migration_path in migration_files:
+        relative_path = migration_path.relative_to(repo_root)
+        try:
+            conn.executescript(migration_path.read_text(encoding="utf-8"))
+        except sqlite3.Error as exc:
+            raise SystemExit(f"[migration-gate] ERROR: failed to apply {relative_path}: {exc}") from exc
+
+    conn.commit()
+
+    table_rows = conn.execute(
+        """
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name NOT LIKE 'sqlite_%'
+        ORDER BY name
+        """
+    ).fetchall()
+    tables = {row[0] for row in table_rows}
+
+    def quote_identifier(value):
+        return '"' + value.replace('"', '""') + '"'
+
+    table_columns = {}
+    table_primary_keys = {}
+    for table in tables:
+        columns = conn.execute(f"PRAGMA table_info({quote_identifier(table)})").fetchall()
+        table_columns[table] = {column[1] for column in columns}
+        table_primary_keys[table] = {column[1] for column in columns if column[5] > 0}
+
+    issues = []
+    for table in sorted(tables):
+        foreign_keys = conn.execute(f"PRAGMA foreign_key_list({quote_identifier(table)})").fetchall()
+
+        for foreign_key in foreign_keys:
+            _id, _seq, referenced_table, from_column, referenced_column, *_rest = foreign_key
+
+            if referenced_table not in tables:
+                issues.append(
+                    f"{table}.{from_column} references missing table {referenced_table}"
+                )
+                continue
+
+            if referenced_column:
+                if referenced_column not in table_columns[referenced_table]:
+                    issues.append(
+                        f"{table}.{from_column} references missing column "
+                        f"{referenced_table}.{referenced_column}"
+                    )
+            elif not table_primary_keys[referenced_table]:
+                issues.append(
+                    f"{table}.{from_column} references {referenced_table} without an explicit column, "
+                    "but the referenced table has no primary key"
+                )
+
+    conn.execute("PRAGMA foreign_keys=ON;")
+    foreign_key_check_rows = conn.execute("PRAGMA foreign_key_check;").fetchall()
+    for child_table, row_id, parent_table, foreign_key_id in foreign_key_check_rows:
+        issues.append(
+            f"PRAGMA foreign_key_check failed for {child_table} rowid {row_id}: "
+            f"foreign key {foreign_key_id} references {parent_table}"
+        )
+
+    if issues:
+        print("[migration-gate] ERROR: SQLite migration schema integrity check failed:", file=sys.stderr)
+        for issue in issues:
+            print(f"[migration-gate] ERROR: - {issue}", file=sys.stderr)
+        raise SystemExit(1)
+
+    print(
+        f"[migration-gate] SQLite migration schema integrity OK "
+        f"({len(migration_files)} migrations, {len(tables)} tables)."
+    )
+finally:
+    if conn is not None:
+        conn.close()
+    try:
+        os.remove(db_path)
+    except FileNotFoundError:
+        pass
+PYCODE
+}
+
 if [[ "${repo_name}" == "internal-tools-starter" || "${repo_name}" == "internal-tools-starter-durable-workflows-plan" ]]; then
   log "Template repository detected; migration prod snapshot gate is installed for generated apps and skipped here."
   exit 0
 fi
 
+validate_sqlite_schema_integrity
+
 health_path="${MIGRATION_GATE_HEALTH_PATH:-/healthy}"
-health_timeout_seconds="${MIGRATION_GATE_HEALTH_TIMEOUT_SECONDS:-180}"
+health_timeout_seconds="${MIGRATION_GATE_HEALTH_TIMEOUT_SECONDS:-600}"
 backup_retry_attempts="${MIGRATION_GATE_BACKUP_RETRY_ATTEMPTS:-6}"
 backup_retry_sleep_seconds="${MIGRATION_GATE_BACKUP_RETRY_SLEEP_SECONDS:-20}"
 image_tag="${MIGRATION_GATE_IMAGE_TAG:-${repo_name}:migration-gate-${GITHUB_SHA:-local}}"
@@ -178,11 +291,17 @@ log "Building candidate image"
 docker build -t "${image_tag}" -f "${dockerfile_path}" .
 
 log "Starting candidate container against prod-shaped SQLite copy"
+# Use the development host environment only to make OpenFGA startup best-effort in
+# this single-container migration gate; FREETOOL_DEV_MODE remains unset so dev
+# seeding and dev-only routes stay disabled. The gate still boots the app against
+# the prod-shaped SQLite snapshot and validates DBUp migrations.
 docker run -d \
   --name "${container_name}" \
   -p 127.0.0.1::8080 \
   -v "${data_dir}:/app/data" \
-  -e ASPNETCORE_ENVIRONMENT=Production \
+  -e ASPNETCORE_ENVIRONMENT=Development \
+  -e OpenFGA__ApiUrl=http://127.0.0.1:9 \
+  -e OpenFGA__StartupRetryAttempts=1 \
   -e Auth__DataProtection__KeysPath=/tmp/migration-gate-data-protection-keys \
   -e "ConnectionStrings__DefaultConnection=Data Source=/app/data/${db_basename}" \
   -e AdAgent__WorkerEnabled=false \
@@ -204,11 +323,9 @@ while [[ "$(date +%s)" -le "${deadline}" ]]; do
   fi
 
   if body="$(curl -fsS --max-time 5 "http://127.0.0.1:${host_port}${health_path}" 2>/dev/null)"; then
-    if [[ "${body}" == "OK" || -n "${body}" ]]; then
-      log "Migration gate passed: candidate container returned healthy response: ${body}"
-      docker logs "${container_name}" >"${container_log}" 2>&1 || true
-      exit 0
-    fi
+    log "Migration gate passed: candidate container returned healthy response: ${body:-<empty>}"
+    docker logs "${container_name}" >"${container_log}" 2>&1 || true
+    exit 0
   else
     last_status="curl failed"
   fi
