@@ -59,6 +59,7 @@ jobs:
               src/**/Database/Persistence.fs|\
               src/**/*DbContext*.fs|\
               scripts/migration-prod-snapshot-gate.sh|\
+              scripts/check-dbup-migrations-append-only.sh|\
               .github/workflows/migration-prod-snapshot-gate.yml|\
               src/**/*.fsproj)
                 required=true
@@ -101,6 +102,14 @@ jobs:
           echo "Migration gate requires production snapshot access and cannot run for forked PRs." >&2
           echo "A maintainer must rerun this workflow from a trusted branch." >&2
           exit 1
+
+      - name: Check DBUp migrations are append-only
+        if: ${{ needs.detect_changes.outputs.required == 'true' }}
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: scripts/check-dbup-migrations-append-only.sh
 
       - name: Install internal-tools CLI
         if: ${{ needs.detect_changes.outputs.required == 'true' }}
