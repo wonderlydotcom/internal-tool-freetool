@@ -301,6 +301,7 @@ docker run -d \
   -v "${data_dir}:/app/data" \
   -e ASPNETCORE_ENVIRONMENT=Development \
   -e OpenFGA__ApiUrl=http://127.0.0.1:9 \
+  -e OpenFGA__StartupRetryAttempts=1 \
   -e Auth__DataProtection__KeysPath=/tmp/migration-gate-data-protection-keys \
   -e "ConnectionStrings__DefaultConnection=Data Source=/app/data/${db_basename}" \
   -e AdAgent__WorkerEnabled=false \

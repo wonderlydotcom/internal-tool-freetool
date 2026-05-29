@@ -19,6 +19,21 @@ type OpenFgaStoreInitializationDependencies = {
 exception OpenFgaStoreMissingException of string
 
 module OpenFgaStoreInitialization =
+    [<Literal>]
+    let private StartupRetryAttemptsEnvironmentVariable = "OpenFGA__StartupRetryAttempts"
+
+    let private configuredMaxAttempts () =
+        let defaultMaxAttempts = 20
+        let value = Environment.GetEnvironmentVariable StartupRetryAttemptsEnvironmentVariable
+        let mutable parsed = 0
+
+        if String.IsNullOrWhiteSpace value then
+            defaultMaxAttempts
+        elif Int32.TryParse(value, &parsed) && parsed > 0 then
+            parsed
+        else
+            defaultMaxAttempts
+
     let createDependencies (connectionString: string) (apiUrl: string) : OpenFgaStoreInitializationDependencies =
         let createAuthorizationService () =
             let tempService = OpenFgaService(apiUrl, NullLogger<OpenFgaService>.Instance)
@@ -113,7 +128,7 @@ module OpenFgaStoreInitialization =
         (configuredStoreId: string)
         (allowAutoCreateWhenPersistedStoreMissing: bool)
         : string =
-        let maxAttempts = 20
+        let maxAttempts = configuredMaxAttempts ()
         let retryDelay = TimeSpan.FromSeconds(2.0)
 
         let rec attempt currentAttempt =
