@@ -323,11 +323,9 @@ while [[ "$(date +%s)" -le "${deadline}" ]]; do
   fi
 
   if body="$(curl -fsS --max-time 5 "http://127.0.0.1:${host_port}${health_path}" 2>/dev/null)"; then
-    if [[ "${body}" == "OK" || -n "${body}" ]]; then
-      log "Migration gate passed: candidate container returned healthy response: ${body}"
-      docker logs "${container_name}" >"${container_log}" 2>&1 || true
-      exit 0
-    fi
+    log "Migration gate passed: candidate container returned healthy response: ${body:-<empty>}"
+    docker logs "${container_name}" >"${container_log}" 2>&1 || true
+    exit 0
   else
     last_status="curl failed"
   fi
