@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "internal-tools-standards-lock.v1",
+  "standardsVersion": "app-repo-deploy.v1-draft",
+  "generatedBy": "internal-tools-control-plane",
+  "app": {
+    "id": "freetool",
+    "repositorySlug": "wonderlydotcom/internal-tool-freetool"
+  },
+  "managedComponents": {
+    "deployWorkflow": {
+      "mode": "copied-generated-asset",
+      "path": ".github/workflows/deploy.yml",
+      "contract": "app-repo-deploy-contract.v1"
+    },
+    "validateWorkflow": {
+      "mode": "copied-generated-asset",
+      "path": ".github/workflows/validate.yml"
+    },
+    "securityScanWorkflow": {
+      "mode": "copied-generated-asset",
+      "path": ".github/workflows/security-scan.yml"
+    },
+    "deployScript": {
+      "mode": "copied-generated-asset",
+      "path": "scripts/deploy-app-from-tofu.sh"
+    },
+    "opentofuSetupScript": {
+      "mode": "copied-generated-asset",
+      "path": "scripts/setup-opentofu.sh"
+    },
+    "appOpenTofu": {
+      "mode": "app-owned",
+      "root": "infra/opentofu",
+      "stateBackend": "gcs",
+      "preserveBackendBucketAndPrefix": true
+    }
+  },
+  "localCi": {
+    "signoff": {
+      "version": "repo-local",
+      "script": "scripts/signoff-pr.sh"
+    },
+    "coverage": {
+      "backend": {
+        "threshold": 90
+      },
+      "frontend": {
+        "threshold": 90
+      }
+    }
+  },
+  "dependencyPolicy": {
+    "frontend": {
+      "exactVersions": true,
+      "lockfile": "package-lock.json",
+      "appliesWhenPackageJsonExists": true
+    },
+    "opentofu": {
+      "requiredLockfiles": [
+        "infra/opentofu/.terraform.lock.hcl"
+      ]
+    }
+  },
+  "runtimeSecrets": {
+    "mode": "aspnet-keyperfile",
+    "mountPath": "/var/run/secrets/app",
+    "bootstrapMarkerPath": "/var/run/secrets/app/.internal-tools/bootstrap"
+  },
+  "catalogContract": {
+    "version": "app-catalog.v1",
+    "appContractVersion": "app-contract.v1"
+  }
+}
