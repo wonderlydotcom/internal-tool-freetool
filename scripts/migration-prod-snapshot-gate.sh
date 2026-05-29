@@ -291,11 +291,15 @@ log "Building candidate image"
 docker build -t "${image_tag}" -f "${dockerfile_path}" .
 
 log "Starting candidate container against prod-shaped SQLite copy"
+# Use the development host environment only to make OpenFGA startup best-effort in
+# this single-container migration gate; FREETOOL_DEV_MODE remains unset so dev
+# seeding and dev-only routes stay disabled. The gate still boots the app against
+# the prod-shaped SQLite snapshot and validates DBUp migrations.
 docker run -d \
   --name "${container_name}" \
   -p 127.0.0.1::8080 \
   -v "${data_dir}:/app/data" \
-  -e ASPNETCORE_ENVIRONMENT=Production \
+  -e ASPNETCORE_ENVIRONMENT=Development \
   -e Auth__DataProtection__KeysPath=/tmp/migration-gate-data-protection-keys \
   -e "ConnectionStrings__DefaultConnection=Data Source=/app/data/${db_basename}" \
   -e AdAgent__WorkerEnabled=false \
