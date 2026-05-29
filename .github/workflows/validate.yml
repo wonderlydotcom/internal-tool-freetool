@@ -1,0 +1,72 @@
+name: validate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      CI: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore backend
+        run: |
+          set -euo pipefail
+          solution_file="$(find . -maxdepth 1 -name '*.sln' | head -n 1)"
+          if [[ -z "$solution_file" ]]; then
+            echo "No solution file found at repo root." >&2
+            exit 1
+          fi
+          dotnet restore "$solution_file"
+
+      - name: Build backend
+        run: |
+          set -euo pipefail
+          solution_file="$(find . -maxdepth 1 -name '*.sln' | head -n 1)"
+          dotnet build "$solution_file" -c Release --no-restore
+
+      - name: Start OpenFGA
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.dev.yml up -d openfga
+          for attempt in {1..60}; do
+            if curl -fsS http://localhost:8090/healthz >/dev/null; then
+              exit 0
+            fi
+            echo "Waiting for OpenFGA health check (${attempt}/60)..."
+            sleep 1
+          done
+          docker compose -f docker-compose.dev.yml ps
+          echo "OpenFGA did not become healthy." >&2
+          exit 1
+
+      - name: Test backend
+        run: |
+          set -euo pipefail
+          solution_file="$(find . -maxdepth 1 -name '*.sln' | head -n 1)"
+          dotnet test "$solution_file" -c Release --no-build
+
+      - name: Stop OpenFGA
+        if: ${{ always() }}
+        run: docker compose -f docker-compose.dev.yml down -v
+
+      - name: Set up OpenTofu
+        if: ${{ hashFiles('infra/**/*.tf') != '' }}
+        run: scripts/setup-opentofu.sh
+
+      - name: Check OpenTofu formatting
+        if: ${{ hashFiles('infra/**/*.tf') != '' }}
+        run: tofu fmt -recursive -check
