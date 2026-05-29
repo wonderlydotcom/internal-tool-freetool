@@ -151,7 +151,7 @@ fi
 validate_sqlite_schema_integrity
 
 health_path="${MIGRATION_GATE_HEALTH_PATH:-/healthy}"
-health_timeout_seconds="${MIGRATION_GATE_HEALTH_TIMEOUT_SECONDS:-180}"
+health_timeout_seconds="${MIGRATION_GATE_HEALTH_TIMEOUT_SECONDS:-300}"
 backup_retry_attempts="${MIGRATION_GATE_BACKUP_RETRY_ATTEMPTS:-6}"
 backup_retry_sleep_seconds="${MIGRATION_GATE_BACKUP_RETRY_SLEEP_SECONDS:-20}"
 image_tag="${MIGRATION_GATE_IMAGE_TAG:-${repo_name}:migration-gate-${GITHUB_SHA:-local}}"
@@ -300,6 +300,7 @@ docker run -d \
   -p 127.0.0.1::8080 \
   -v "${data_dir}:/app/data" \
   -e ASPNETCORE_ENVIRONMENT=Development \
+  -e OpenFGA__ApiUrl=http://127.0.0.1:9 \
   -e Auth__DataProtection__KeysPath=/tmp/migration-gate-data-protection-keys \
   -e "ConnectionStrings__DefaultConnection=Data Source=/app/data/${db_basename}" \
   -e AdAgent__WorkerEnabled=false \
