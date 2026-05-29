@@ -20,11 +20,15 @@ exception OpenFgaStoreMissingException of string
 
 module OpenFgaStoreInitialization =
     [<Literal>]
-    let private StartupRetryAttemptsEnvironmentVariable = "OpenFGA__StartupRetryAttempts"
+    let private StartupRetryAttemptsEnvironmentVariable =
+        "OpenFGA__StartupRetryAttempts"
 
     let private configuredMaxAttempts () =
         let defaultMaxAttempts = 20
-        let value = Environment.GetEnvironmentVariable StartupRetryAttemptsEnvironmentVariable
+
+        let value =
+            Environment.GetEnvironmentVariable StartupRetryAttemptsEnvironmentVariable
+
         let mutable parsed = 0
 
         if String.IsNullOrWhiteSpace value then
