@@ -1,32 +1,7 @@
--- Rebuild Folders so the self-referencing ParentId foreign key points at the final table name.
--- DBUP.017 recreated the table through Folders_new and left the FK pointing at that
--- transient table name in fresh SQLite schemas.
+-- DBUP.017 now builds fresh schemas with Folders.ParentId referencing Folders.
+-- Existing production databases already have the correct self-reference after SQLite
+-- rewrote the transient table reference during the original migration. Keep this
+-- migration as a no-op so environments that pulled the previous repair attempt can
+-- record DBUP.030 without rebuilding Folders under DbUp's transaction.
 
-PRAGMA foreign_keys=OFF;
-PRAGMA defer_foreign_keys=ON;
-
-DROP TABLE IF EXISTS Folders_fk_rebuild;
-
-CREATE TABLE Folders_fk_rebuild (
-    Id TEXT NOT NULL PRIMARY KEY,
-    Name TEXT NOT NULL,
-    ParentId TEXT,
-    SpaceId TEXT NOT NULL,
-    CreatedAt TEXT NOT NULL,
-    UpdatedAt TEXT NOT NULL,
-    IsDeleted INTEGER NOT NULL DEFAULT 0,
-    FOREIGN KEY (SpaceId) REFERENCES Spaces(Id),
-    FOREIGN KEY (ParentId) REFERENCES Folders(Id)
-);
-
-INSERT INTO Folders_fk_rebuild (Id, Name, ParentId, SpaceId, CreatedAt, UpdatedAt, IsDeleted)
-SELECT Id, Name, ParentId, SpaceId, CreatedAt, UpdatedAt, IsDeleted FROM Folders;
-
-DROP TABLE Folders;
-ALTER TABLE Folders_fk_rebuild RENAME TO Folders;
-
-CREATE UNIQUE INDEX IX_Folders_Name_ParentId ON Folders(Name, ParentId);
-CREATE INDEX IX_Folders_IsDeleted ON Folders(IsDeleted);
-CREATE INDEX IX_Folders_SpaceId ON Folders(SpaceId);
-
-PRAGMA foreign_keys=ON;
+SELECT 1;

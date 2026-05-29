@@ -18,7 +18,7 @@ CREATE TABLE Folders_new (
     UpdatedAt TEXT NOT NULL,
     IsDeleted INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (SpaceId) REFERENCES Spaces(Id),
-    FOREIGN KEY (ParentId) REFERENCES Folders_new(Id)
+    FOREIGN KEY (ParentId) REFERENCES Folders(Id)
 );
 
 INSERT INTO Folders_new (Id, Name, ParentId, SpaceId, CreatedAt, UpdatedAt, IsDeleted)
