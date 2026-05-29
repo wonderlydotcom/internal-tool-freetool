@@ -151,7 +151,7 @@ fi
 validate_sqlite_schema_integrity
 
 health_path="${MIGRATION_GATE_HEALTH_PATH:-/healthy}"
-health_timeout_seconds="${MIGRATION_GATE_HEALTH_TIMEOUT_SECONDS:-420}"
+health_timeout_seconds="${MIGRATION_GATE_HEALTH_TIMEOUT_SECONDS:-600}"
 backup_retry_attempts="${MIGRATION_GATE_BACKUP_RETRY_ATTEMPTS:-6}"
 backup_retry_sleep_seconds="${MIGRATION_GATE_BACKUP_RETRY_SLEEP_SECONDS:-20}"
 image_tag="${MIGRATION_GATE_IMAGE_TAG:-${repo_name}:migration-gate-${GITHUB_SHA:-local}}"
