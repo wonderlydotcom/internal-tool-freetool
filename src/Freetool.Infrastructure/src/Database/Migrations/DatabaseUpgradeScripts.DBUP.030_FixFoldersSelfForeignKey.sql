@@ -3,6 +3,7 @@
 -- transient table name in fresh SQLite schemas.
 
 PRAGMA foreign_keys=OFF;
+PRAGMA defer_foreign_keys=ON;
 
 DROP TABLE IF EXISTS Folders_fk_rebuild;
 
